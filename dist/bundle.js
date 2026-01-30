@@ -54,6 +54,7 @@ async function bundle() {
         'keepOutputDirectory',
         'packagerOptions',
         'installExtraArgs',
+        'installDeps',
         'outputFileExtension',
         'outputBuildFolder',
         'outputWorkFolder',

@@ -35,6 +35,7 @@ export async function bundle(this: EsbuildServerlessPlugin): Promise<void> {
     'keepOutputDirectory',
     'packagerOptions',
     'installExtraArgs',
+    'installDeps',
     'outputFileExtension',
     'outputBuildFolder',
     'outputWorkFolder',
