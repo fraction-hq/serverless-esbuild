@@ -9,7 +9,7 @@ import { uniq } from 'ramda';
 
 import type EsbuildServerlessPlugin from './index';
 import { asArray, assertIsString, isESM } from './helper';
-import type { EsbuildOptions, FileBuildResult, FunctionBuildResult, BuildContext } from './types';
+import type { EsbuildOptions, FileBuildResult, FunctionBuildResult } from './types';
 import { trimExtension } from './utils';
 
 const getStringArray = (input: unknown): string[] => asArray(input).filter(Predicate.isString);
@@ -84,40 +84,13 @@ export async function bundle(this: EsbuildServerlessPlugin): Promise<void> {
   const bundleMapper = async (entry: string): Promise<FileBuildResult> => {
     const bundlePath = entry.slice(0, entry.lastIndexOf('.')) + buildOptions.outputFileExtension;
 
-    // check cache
-    if (this.buildCache) {
-      const { result, context } = this.buildCache[entry] ?? {};
-
-      if (result?.rebuild) {
-        await result.rebuild();
-        return { bundlePath, entry, result };
-      }
-
-      if (context?.rebuild) {
-        const rebuild = await context.rebuild();
-        return { bundlePath, entry, context, result: rebuild };
-      }
-    }
-
     const options = {
       ...config,
       entryPoints: [entry],
       outdir: path.join(buildDirPath, path.dirname(entry)),
     };
 
-    type ContextFn = (opts: typeof options) => Promise<BuildContext>;
-    type WithContext = typeof pkg & { context?: ContextFn };
-    const context = buildOptions.skipRebuild ? undefined : await (pkg as WithContext).context?.(options);
-
-    let result;
-    if (!buildOptions.skipRebuild) {
-      result = await context?.rebuild();
-      if (!result) {
-        result = await pkg.build(options);
-      }
-    } else {
-      result = await pkg.build(options);
-    }
+    const result = await pkg.build(options);
 
     if (config.metafile) {
       fs.writeFileSync(
@@ -126,7 +99,7 @@ export async function bundle(this: EsbuildServerlessPlugin): Promise<void> {
       );
     }
 
-    return { bundlePath, entry, result, context };
+    return { bundlePath, entry, result };
   };
 
   // Files can contain multiple handlers for multiple functions, we want to get only the unique ones
@@ -138,8 +111,8 @@ export async function bundle(this: EsbuildServerlessPlugin): Promise<void> {
     concurrency: buildOptions.concurrency,
   });
 
-  // Create a cache with entry as key
-  this.buildCache = fileBuildResults.reduce<Record<string, FileBuildResult>>((acc, fileBuildResult) => {
+  // Create a local cache with entry as key (not instance-level to avoid memory leak)
+  const buildCache = fileBuildResults.reduce<Record<string, FileBuildResult>>((acc, fileBuildResult) => {
     acc[fileBuildResult.entry] = fileBuildResult;
 
     return acc;
@@ -148,7 +121,7 @@ export async function bundle(this: EsbuildServerlessPlugin): Promise<void> {
   // Map function entries back to bundles
   this.buildResults = this.functionEntries
     .map(({ entry, func, functionAlias }) => {
-      const { bundlePath } = this.buildCache[entry] ?? {};
+      const { bundlePath } = buildCache[entry] ?? {};
 
       if (typeof bundlePath !== 'string' || func === null) {
         return;

@@ -317,6 +317,7 @@ class EsbuildServerlessPlugin implements ServerlessPlugin {
         ignoreLockfile: false,
       },
       installExtraArgs: [],
+      installDeps: true,
       watch: {
         pattern: './**/*.(js|ts)',
         ignore: [WORK_FOLDER, 'dist', 'node_modules', BUILD_FOLDER],

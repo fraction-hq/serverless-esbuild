@@ -40,6 +40,7 @@ export interface Configuration extends EsbuildOptions {
   nativeZip: boolean;
   watch: WatchConfiguration;
   installExtraArgs: string[];
+  installDeps?: boolean | Array<{ package: string; args: string }>;
   plugins?: string | Plugin[];
   keepOutputDirectory?: boolean;
   outputWorkFolder?: string;
@@ -155,7 +156,7 @@ export interface IFile {
 }
 export type IFiles = readonly IFile[];
 
-export type PackagerId = 'npm' | 'pnpm' | 'yarn';
+export type PackagerId = 'npm' | 'pnpm' | 'yarn' | 'bun';
 
 export type PackageJSON = {
   name: string;

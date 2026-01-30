@@ -29,6 +29,11 @@ const packagerFactories: Record<PackagerId, (packagerOptions: PackagerOptions) =
 
     return new Yarn(packagerOptions);
   },
+  async bun() {
+    const { Bun } = await import('./bun');
+
+    return new Bun();
+  },
 };
 
 /**

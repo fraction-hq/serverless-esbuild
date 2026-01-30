@@ -62,7 +62,7 @@ export const findUp = (name: string) =>
  */
 export const findProjectRoot = (rootDir?: string) =>
   Effect.fromNullable(rootDir).pipe(
-    Effect.orElse(() => findUpEffect(['yarn.lock', 'pnpm-lock.yaml', 'package-lock.json'])),
+    Effect.orElse(() => findUpEffect(['yarn.lock', 'pnpm-lock.yaml', 'package-lock.json', 'bun.lock', 'bun.lockb'])),
     Effect.orElseSucceed(() => undefined),
     Effect.provide(FSyncLayer),
     Effect.runSync

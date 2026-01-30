@@ -199,6 +199,36 @@ export function nodeExternalsPluginUtilsPath(): string | undefined {
 }
 
 /**
+ * Helper to handle package installation based on installDeps configuration.
+ * Extracted to reduce complexity of packExternalModules.
+ */
+async function installPackages(
+  plugin: EsbuildServerlessPlugin,
+  compositeModulePath: string,
+  packager: Awaited<ReturnType<typeof getPackager>>,
+  exists: boolean
+): Promise<void> {
+  const { installExtraArgs, installDeps = true } = plugin.buildOptions!;
+
+  if (installDeps === false) {
+    return;
+  }
+
+  if (Array.isArray(installDeps)) {
+    // Per-package installation with specific args using npm
+    const npmPackager = await getPackager.call(plugin, 'npm', plugin.buildOptions!.packagerOptions);
+    for (const dep of installDeps) {
+      plugin.log.verbose(`Installing ${dep.package} at ${compositeModulePath} with NPM`);
+      await npmPackager.install(compositeModulePath, [dep.args, dep.package], false);
+    }
+    return;
+  }
+
+  // Standard install with configured packager
+  await packager.install(compositeModulePath, installExtraArgs, exists);
+}
+
+/**
  * We need a performant algorithm to install the packages for each single
  * function (in case we package individually).
  * (1) We fetch ALL packages needed by ALL functions in a first step
@@ -375,15 +405,17 @@ export async function packExternalModules(this: EsbuildServerlessPlugin) {
   const start = Date.now();
 
   this.log.verbose(`Packing external modules: ${compositeModules.join(', ')}`);
-  const { installExtraArgs } = this.buildOptions;
+  const { installDeps = true } = this.buildOptions;
 
-  await packager.install(compositeModulePath, installExtraArgs, exists);
+  await installPackages(this, compositeModulePath, packager, exists);
   this.log.debug(`Package took [${Date.now() - start} ms]`);
 
   // Prune extraneous packages - removes not needed ones
   const startPrune = Date.now();
 
-  await packager.prune(compositeModulePath);
+  if (installDeps === true) {
+    await packager.prune(compositeModulePath);
+  }
 
   this.log.debug(`Prune: ${compositeModulePath} [${Date.now() - startPrune} ms]`);
 
