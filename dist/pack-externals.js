@@ -288,7 +288,7 @@ async function installPackagesWithArgs(plugin, compositeModulePath, installArgs,
  * This runs the packager's install command inside each external package's directory
  * to pull in all of that package's dependencies.
  */
-async function installExternalNestedDependencies(plugin, compositeModulePath, externals, packager) {
+async function installExternalNestedDependencies(plugin, compositeModulePath, externals, packager, installArgs) {
     for (const packageName of externals) {
         const packageDir = path_1.default.join(compositeModulePath, "node_modules", packageName);
         // Check if package exists and has a package.json
@@ -300,16 +300,26 @@ async function installExternalNestedDependencies(plugin, compositeModulePath, ex
         // Check if the package has any dependencies
         const packageJson = fs_extra_1.default.readJsonSync(packageJsonPath);
         const hasDeps = packageJson.dependencies &&
-            Object.keys(packageJson.dependencies).length >
+            Object.keys(packageJson.dependencies)
+                .length >
                 0;
         if (!hasDeps) {
             plugin.log.debug(`Skipping nested dependency install for ${packageName}: no dependencies`);
             continue;
         }
-        plugin.log.verbose(`Installing nested dependencies for ${packageName}`);
+        // Get args for this package if they exist
+        const args = installArgs.get(packageName);
+        const splitArgs = args
+            ? args
+                .split(/\s+/)
+                .filter(Boolean)
+            : [];
+        plugin.log.verbose(`Installing nested dependencies for ${packageName}${args
+            ? ` with args: ${args}`
+            : ""}`);
         const startTime = Date.now();
         try {
-            await packager.install(packageDir, [], false);
+            await packager.install(packageDir, splitArgs, false);
             plugin.log.debug(`Nested dependencies for ${packageName} installed in ${Date.now() -
                 startTime}ms`);
         }
@@ -348,13 +358,15 @@ async function installPackages(plugin, compositeModulePath, packager, exists, in
     // Standard install with configured packager
     await packager.install(compositeModulePath, installExtraArgs, exists);
     // Install packages that have specific args configured
-    plugin.log.debug(`installArgs size: ${installArgs.size}, entries: ${JSON.stringify([...installArgs.entries()])}`);
+    plugin.log.debug(`installArgs size: ${installArgs.size}, entries: ${JSON.stringify([
+        ...installArgs.entries(),
+    ])}`);
     if (installArgs.size >
         0) {
         await installPackagesWithArgs(plugin, compositeModulePath, installArgs, packager);
     }
     // Install nested dependencies for each external package
-    await installExternalNestedDependencies(plugin, compositeModulePath, externals, packager);
+    await installExternalNestedDependencies(plugin, compositeModulePath, externals, packager, installArgs);
 }
 /**
  * We need a performant algorithm to install the packages for each single
@@ -412,7 +424,9 @@ async function packExternalModules() {
             parseExternals(rawExternals);
     }
     this.log.debug(`Raw externals: ${JSON.stringify(rawExternals)}`);
-    this.log.debug(`Parsed installArgs: ${JSON.stringify([...parsedExternals.installArgs.entries()])}`);
+    this.log.debug(`Parsed installArgs: ${JSON.stringify([
+        ...parsedExternals.installArgs.entries(),
+    ])}`);
     const externals = parsedExternals
         .names
         .length >

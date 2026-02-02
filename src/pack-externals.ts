@@ -593,9 +593,14 @@ async function installPackagesWithArgs(
       `Installing ${packageName} with args: ${args}`
     );
     // Split args string into individual arguments
-    const splitArgs = args
-      .split(/\s+/)
-      .filter(Boolean);
+    const splitArgs =
+      args
+        .split(
+          /\s+/
+        )
+        .filter(
+          Boolean
+        );
     // Use --ignore-scripts to prevent triggering other packages' install scripts
     // Our postinstall scripts are handled separately via the postinstall config
     await packager.install(
@@ -623,6 +628,10 @@ async function installExternalNestedDependencies(
     ReturnType<
       typeof getPackager
     >
+  >,
+  installArgs: Map<
+    string,
+    string
   >
 ): Promise<void> {
   for (const packageName of externals) {
@@ -660,7 +669,8 @@ async function installExternalNestedDependencies(
       packageJson.dependencies &&
       Object.keys(
         packageJson.dependencies
-      ).length >
+      )
+        .length >
         0;
 
     if (
@@ -672,8 +682,28 @@ async function installExternalNestedDependencies(
       continue;
     }
 
+    // Get args for this package if they exist
+    const args =
+      installArgs.get(
+        packageName
+      );
+    const splitArgs =
+      args
+        ? args
+            .split(
+              /\s+/
+            )
+            .filter(
+              Boolean
+            )
+        : [];
+
     plugin.log.verbose(
-      `Installing nested dependencies for ${packageName}`
+      `Installing nested dependencies for ${packageName}${
+        args
+          ? ` with args: ${args}`
+          : ""
+      }`
     );
 
     const startTime =
@@ -682,7 +712,7 @@ async function installExternalNestedDependencies(
     try {
       await packager.install(
         packageDir,
-        [],
+        splitArgs,
         false
       );
       plugin.log.debug(
@@ -775,7 +805,13 @@ async function installPackages(
 
   // Install packages that have specific args configured
   plugin.log.debug(
-    `installArgs size: ${installArgs.size}, entries: ${JSON.stringify([...installArgs.entries()])}`
+    `installArgs size: ${
+      installArgs.size
+    }, entries: ${JSON.stringify(
+      [
+        ...installArgs.entries(),
+      ]
+    )}`
   );
   if (
     installArgs.size >
@@ -794,7 +830,8 @@ async function installPackages(
     plugin,
     compositeModulePath,
     externals,
-    packager
+    packager,
+    installArgs
   );
 }
 
@@ -910,10 +947,16 @@ export async function packExternalModules(
   }
 
   this.log.debug(
-    `Raw externals: ${JSON.stringify(rawExternals)}`
+    `Raw externals: ${JSON.stringify(
+      rawExternals
+    )}`
   );
   this.log.debug(
-    `Parsed installArgs: ${JSON.stringify([...parsedExternals.installArgs.entries()])}`
+    `Parsed installArgs: ${JSON.stringify(
+      [
+        ...parsedExternals.installArgs.entries(),
+      ]
+    )}`
   );
 
   const externals: string[] =
