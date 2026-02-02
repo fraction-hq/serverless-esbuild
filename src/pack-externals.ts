@@ -576,6 +576,10 @@ async function installPackagesWithArgs(
     ReturnType<
       typeof getPackager
     >
+  >,
+  postinstallScripts: Map<
+    string,
+    string
   >
 ): Promise<void> {
   if (
@@ -601,8 +605,8 @@ async function installPackagesWithArgs(
         .filter(
           Boolean
         );
-    // Use --ignore-scripts to prevent triggering other packages' install scripts
-    // Our postinstall scripts are handled separately via the postinstall config
+    // Always use --ignore-scripts to prevent other packages' postinstall
+    // from running (e.g., muhammara's broken postinstall)
     await packager.install(
       compositeModulePath,
       [
@@ -612,6 +616,71 @@ async function installPackagesWithArgs(
       ],
       false
     );
+
+    // If this package doesn't have a custom postinstall, run its own postinstall
+    // script (if it has one) since we used --ignore-scripts above
+    const hasCustomPostinstall =
+      postinstallScripts.has(
+        packageName
+      );
+    if (
+      !hasCustomPostinstall
+    ) {
+      const packageDir =
+        path.join(
+          compositeModulePath,
+          "node_modules",
+          packageName
+        );
+      const packageJsonPath =
+        path.join(
+          packageDir,
+          "package.json"
+        );
+      if (
+        fse.pathExistsSync(
+          packageJsonPath
+        )
+      ) {
+        const packageJson =
+          fse.readJsonSync(
+            packageJsonPath
+          );
+        const postinstallScript =
+          packageJson.scripts
+            ?.postinstall ||
+          packageJson.scripts
+            ?.install;
+        if (
+          postinstallScript
+        ) {
+          plugin.log.verbose(
+            `Running postinstall for ${packageName}`
+          );
+          try {
+            await spawnProcess(
+              "sh",
+              [
+                "-c",
+                postinstallScript,
+              ],
+              {
+                cwd: packageDir,
+              }
+            );
+          } catch (error) {
+            plugin.log.warning(
+              `Postinstall for ${packageName} failed: ${
+                error instanceof
+                Error
+                  ? error.message
+                  : error
+              }`
+            );
+          }
+        }
+      }
+    }
   }
 }
 
@@ -751,7 +820,11 @@ async function installPackages(
     string,
     string
   >,
-  externals: string[]
+  externals: string[],
+  postinstallScripts: Map<
+    string,
+    string
+  >
 ): Promise<void> {
   const {
     installExtraArgs,
@@ -821,7 +894,8 @@ async function installPackages(
       plugin,
       compositeModulePath,
       installArgs,
-      packager
+      packager,
+      postinstallScripts
     );
   }
 
@@ -1359,7 +1433,8 @@ export async function packExternalModules(
     packager,
     exists,
     installArgs,
-    externals
+    externals,
+    postinstallScripts
   );
   this.log.debug(
     `Package took [${

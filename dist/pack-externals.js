@@ -263,7 +263,7 @@ async function runPostinstallScripts(plugin, compositeModulePath, postinstallScr
  * Install packages that have specific install args configured.
  * Uses the configured packager to install each package with its args.
  */
-async function installPackagesWithArgs(plugin, compositeModulePath, installArgs, packager) {
+async function installPackagesWithArgs(plugin, compositeModulePath, installArgs, packager, postinstallScripts) {
     if (installArgs.size ===
         0) {
         return;
@@ -274,13 +274,44 @@ async function installPackagesWithArgs(plugin, compositeModulePath, installArgs,
         const splitArgs = args
             .split(/\s+/)
             .filter(Boolean);
-        // Use --ignore-scripts to prevent triggering other packages' install scripts
-        // Our postinstall scripts are handled separately via the postinstall config
+        // Always use --ignore-scripts to prevent other packages' postinstall
+        // from running (e.g., muhammara's broken postinstall)
         await packager.install(compositeModulePath, [
             "--ignore-scripts",
             ...splitArgs,
             packageName,
         ], false);
+        // If this package doesn't have a custom postinstall, run its own postinstall
+        // script (if it has one) since we used --ignore-scripts above
+        const hasCustomPostinstall = postinstallScripts.has(packageName);
+        if (!hasCustomPostinstall) {
+            const packageDir = path_1.default.join(compositeModulePath, "node_modules", packageName);
+            const packageJsonPath = path_1.default.join(packageDir, "package.json");
+            if (fs_extra_1.default.pathExistsSync(packageJsonPath)) {
+                const packageJson = fs_extra_1.default.readJsonSync(packageJsonPath);
+                const postinstallScript = packageJson.scripts
+                    ?.postinstall ||
+                    packageJson.scripts
+                        ?.install;
+                if (postinstallScript) {
+                    plugin.log.verbose(`Running postinstall for ${packageName}`);
+                    try {
+                        await (0, utils_1.spawnProcess)("sh", [
+                            "-c",
+                            postinstallScript,
+                        ], {
+                            cwd: packageDir,
+                        });
+                    }
+                    catch (error) {
+                        plugin.log.warning(`Postinstall for ${packageName} failed: ${error instanceof
+                            Error
+                            ? error.message
+                            : error}`);
+                    }
+                }
+            }
+        }
     }
 }
 /**
@@ -335,7 +366,7 @@ async function installExternalNestedDependencies(plugin, compositeModulePath, ex
  * Helper to handle package installation based on installDeps configuration.
  * Extracted to reduce complexity of packExternalModules.
  */
-async function installPackages(plugin, compositeModulePath, packager, exists, installArgs, externals) {
+async function installPackages(plugin, compositeModulePath, packager, exists, installArgs, externals, postinstallScripts) {
     const { installExtraArgs, installDeps = true, } = plugin.buildOptions;
     if (installDeps ===
         false) {
@@ -363,7 +394,7 @@ async function installPackages(plugin, compositeModulePath, packager, exists, in
     ])}`);
     if (installArgs.size >
         0) {
-        await installPackagesWithArgs(plugin, compositeModulePath, installArgs, packager);
+        await installPackagesWithArgs(plugin, compositeModulePath, installArgs, packager, postinstallScripts);
     }
     // Install nested dependencies for each external package
     await installExternalNestedDependencies(plugin, compositeModulePath, externals, packager, installArgs);
@@ -582,7 +613,7 @@ async function packExternalModules() {
     this.log.verbose(`Packing external modules: ${compositeModules.join(", ")}`);
     const { installDeps = true, } = this
         .buildOptions;
-    await installPackages(this, compositeModulePath, packager, exists, installArgs, externals);
+    await installPackages(this, compositeModulePath, packager, exists, installArgs, externals, postinstallScripts);
     this.log.debug(`Package took [${Date.now() -
         start} ms]`);
     // Run postinstall scripts for packages that have them configured
