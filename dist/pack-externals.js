@@ -261,19 +261,21 @@ async function runPostinstallScripts(plugin, compositeModulePath, postinstallScr
 }
 /**
  * Install packages that have specific install args configured.
- * Uses npm to install each package with its args.
+ * Uses the configured packager to install each package with its args.
  */
-async function installPackagesWithArgs(plugin, compositeModulePath, installArgs) {
+async function installPackagesWithArgs(plugin, compositeModulePath, installArgs, packager) {
     if (installArgs.size ===
         0) {
         return;
     }
-    const npmPackager = await packagers_1.getPackager.call(plugin, "npm", plugin.buildOptions
-        .packagerOptions);
     for (const [packageName, args,] of installArgs) {
         plugin.log.verbose(`Installing ${packageName} with args: ${args}`);
-        await npmPackager.install(compositeModulePath, [
-            args,
+        // Split args string into individual arguments
+        const splitArgs = args
+            .split(/\s+/)
+            .filter(Boolean);
+        await packager.install(compositeModulePath, [
+            ...splitArgs,
             packageName,
         ], false);
     }
@@ -345,7 +347,7 @@ async function installPackages(plugin, compositeModulePath, packager, exists, in
     // Install packages that have specific args configured
     if (installArgs.size >
         0) {
-        await installPackagesWithArgs(plugin, compositeModulePath, installArgs);
+        await installPackagesWithArgs(plugin, compositeModulePath, installArgs, packager);
     }
     // Install nested dependencies for each external package
     await installExternalNestedDependencies(plugin, compositeModulePath, externals, packager);

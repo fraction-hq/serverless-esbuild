@@ -563,7 +563,7 @@ async function runPostinstallScripts(
 
 /**
  * Install packages that have specific install args configured.
- * Uses npm to install each package with its args.
+ * Uses the configured packager to install each package with its args.
  */
 async function installPackagesWithArgs(
   plugin: EsbuildServerlessPlugin,
@@ -571,6 +571,11 @@ async function installPackagesWithArgs(
   installArgs: Map<
     string,
     string
+  >,
+  packager: Awaited<
+    ReturnType<
+      typeof getPackager
+    >
   >
 ): Promise<void> {
   if (
@@ -580,14 +585,6 @@ async function installPackagesWithArgs(
     return;
   }
 
-  const npmPackager =
-    await getPackager.call(
-      plugin,
-      "npm",
-      plugin.buildOptions!
-        .packagerOptions
-    );
-
   for (const [
     packageName,
     args,
@@ -595,10 +592,14 @@ async function installPackagesWithArgs(
     plugin.log.verbose(
       `Installing ${packageName} with args: ${args}`
     );
-    await npmPackager.install(
+    // Split args string into individual arguments
+    const splitArgs = args
+      .split(/\s+/)
+      .filter(Boolean);
+    await packager.install(
       compositeModulePath,
       [
-        args,
+        ...splitArgs,
         packageName,
       ],
       false
@@ -777,7 +778,8 @@ async function installPackages(
     await installPackagesWithArgs(
       plugin,
       compositeModulePath,
-      installArgs
+      installArgs,
+      packager
     );
   }
 
