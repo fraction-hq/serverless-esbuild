@@ -345,6 +345,7 @@ async function installPackages(plugin, compositeModulePath, packager, exists, in
     // Standard install with configured packager
     await packager.install(compositeModulePath, installExtraArgs, exists);
     // Install packages that have specific args configured
+    plugin.log.debug(`installArgs size: ${installArgs.size}, entries: ${JSON.stringify([...installArgs.entries()])}`);
     if (installArgs.size >
         0) {
         await installPackagesWithArgs(plugin, compositeModulePath, installArgs, packager);
@@ -407,6 +408,8 @@ async function packExternalModules() {
         parsedExternals =
             parseExternals(rawExternals);
     }
+    this.log.debug(`Raw externals: ${JSON.stringify(rawExternals)}`);
+    this.log.debug(`Parsed installArgs: ${JSON.stringify([...parsedExternals.installArgs.entries()])}`);
     const externals = parsedExternals
         .names
         .length >

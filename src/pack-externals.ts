@@ -771,6 +771,9 @@ async function installPackages(
   );
 
   // Install packages that have specific args configured
+  plugin.log.debug(
+    `installArgs size: ${installArgs.size}, entries: ${JSON.stringify([...installArgs.entries()])}`
+  );
   if (
     installArgs.size >
     0
@@ -902,6 +905,13 @@ export async function packExternalModules(
         rawExternals as ExternalDefinition[]
       );
   }
+
+  this.log.debug(
+    `Raw externals: ${JSON.stringify(rawExternals)}`
+  );
+  this.log.debug(
+    `Parsed installArgs: ${JSON.stringify([...parsedExternals.installArgs.entries()])}`
+  );
 
   const externals: string[] =
     parsedExternals

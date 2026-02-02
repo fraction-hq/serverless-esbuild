@@ -1,1 +1,1 @@
-{"version":3,"file":"pack-externals.d.ts","sourceRoot":"","sources":["../src/pack-externals.ts"],"names":[],"mappings":"AAgBA,OAAO,KAAK,uBAAuB,MAAM,SAAS,CAAC;AA0VnD,wBAAgB,4BAA4B,IACxC,MAAM,GACN,SAAS,CAiBZ;AA6ZD;;;;;;;;;;;;GAYG;AAEH,wBAAsB,mBAAmB,CACvC,IAAI,EAAE,uBAAuB,iBAwkB9B"}
+{"version":3,"file":"pack-externals.d.ts","sourceRoot":"","sources":["../src/pack-externals.ts"],"names":[],"mappings":"AAgBA,OAAO,KAAK,uBAAuB,MAAM,SAAS,CAAC;AA0VnD,wBAAgB,4BAA4B,IACxC,MAAM,GACN,SAAS,CAiBZ;AAgaD;;;;;;;;;;;;GAYG;AAEH,wBAAsB,mBAAmB,CACvC,IAAI,EAAE,uBAAuB,iBA+kB9B"}
