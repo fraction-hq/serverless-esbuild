@@ -384,6 +384,11 @@ export function nodeExternalsPluginUtilsPath():
 interface ParsedExternals {
   /** Package names as strings for esbuild */
   names: string[];
+  /** Map of package name to install args (e.g., "--os=linux --cpu=x64") */
+  installArgs: Map<
+    string,
+    string
+  >;
   /** Map of package name to postinstall config */
   postinstallScripts: Map<
     string,
@@ -404,6 +409,11 @@ function parseExternals(
 ): ParsedExternals {
   const names: string[] =
     [];
+  const installArgs =
+    new Map<
+      string,
+      string
+    >();
   const postinstallScripts =
     new Map<
       string,
@@ -419,7 +429,7 @@ function parseExternals(
         external
       );
     } else {
-      // Object format: { packageName: { postinstall: "..." } }
+      // Object format: { packageName: { args: "...", postinstall: "..." } }
       const packageNames =
         Object.keys(
           external
@@ -432,6 +442,14 @@ function parseExternals(
           external[
             packageName
           ];
+        if (
+          config?.args
+        ) {
+          installArgs.set(
+            packageName,
+            config.args
+          );
+        }
         if (
           config?.postinstall
         ) {
@@ -446,6 +464,7 @@ function parseExternals(
 
   return {
     names,
+    installArgs,
     postinstallScripts,
   };
 }
@@ -543,6 +562,145 @@ async function runPostinstallScripts(
 }
 
 /**
+ * Install packages that have specific install args configured.
+ * Uses npm to install each package with its args.
+ */
+async function installPackagesWithArgs(
+  plugin: EsbuildServerlessPlugin,
+  compositeModulePath: string,
+  installArgs: Map<
+    string,
+    string
+  >
+): Promise<void> {
+  if (
+    installArgs.size ===
+    0
+  ) {
+    return;
+  }
+
+  const npmPackager =
+    await getPackager.call(
+      plugin,
+      "npm",
+      plugin.buildOptions!
+        .packagerOptions
+    );
+
+  for (const [
+    packageName,
+    args,
+  ] of installArgs) {
+    plugin.log.verbose(
+      `Installing ${packageName} with args: ${args}`
+    );
+    await npmPackager.install(
+      compositeModulePath,
+      [
+        args,
+        packageName,
+      ],
+      false
+    );
+  }
+}
+
+/**
+ * Install nested dependencies for each external package.
+ * This runs the packager's install command inside each external package's directory
+ * to pull in all of that package's dependencies.
+ */
+async function installExternalNestedDependencies(
+  plugin: EsbuildServerlessPlugin,
+  compositeModulePath: string,
+  externals: string[],
+  packager: Awaited<
+    ReturnType<
+      typeof getPackager
+    >
+  >
+): Promise<void> {
+  for (const packageName of externals) {
+    const packageDir =
+      path.join(
+        compositeModulePath,
+        "node_modules",
+        packageName
+      );
+
+    // Check if package exists and has a package.json
+    const packageJsonPath =
+      path.join(
+        packageDir,
+        "package.json"
+      );
+
+    if (
+      !fse.pathExistsSync(
+        packageJsonPath
+      )
+    ) {
+      plugin.log.debug(
+        `Skipping nested dependency install for ${packageName}: no package.json found`
+      );
+      continue;
+    }
+
+    // Check if the package has any dependencies
+    const packageJson =
+      fse.readJsonSync(
+        packageJsonPath
+      );
+    const hasDeps =
+      packageJson.dependencies &&
+      Object.keys(
+        packageJson.dependencies
+      ).length >
+        0;
+
+    if (
+      !hasDeps
+    ) {
+      plugin.log.debug(
+        `Skipping nested dependency install for ${packageName}: no dependencies`
+      );
+      continue;
+    }
+
+    plugin.log.verbose(
+      `Installing nested dependencies for ${packageName}`
+    );
+
+    const startTime =
+      Date.now();
+
+    try {
+      await packager.install(
+        packageDir,
+        [],
+        false
+      );
+      plugin.log.debug(
+        `Nested dependencies for ${packageName} installed in ${
+          Date.now() -
+          startTime
+        }ms`
+      );
+    } catch (error) {
+      plugin.log.warning(
+        `Failed to install nested dependencies for ${packageName}: ${
+          error instanceof
+          Error
+            ? error.message
+            : error
+        }`
+      );
+    }
+  }
+}
+
+/**
  * Helper to handle package installation based on installDeps configuration.
  * Extracted to reduce complexity of packExternalModules.
  */
@@ -554,7 +712,12 @@ async function installPackages(
       typeof getPackager
     >
   >,
-  exists: boolean
+  exists: boolean,
+  installArgs: Map<
+    string,
+    string
+  >,
+  externals: string[]
 ): Promise<void> {
   const {
     installExtraArgs,
@@ -569,6 +732,7 @@ async function installPackages(
     return;
   }
 
+  // Legacy support for installDeps array format
   if (
     Array.isArray(
       installDeps
@@ -603,6 +767,26 @@ async function installPackages(
     compositeModulePath,
     installExtraArgs,
     exists
+  );
+
+  // Install packages that have specific args configured
+  if (
+    installArgs.size >
+    0
+  ) {
+    await installPackagesWithArgs(
+      plugin,
+      compositeModulePath,
+      installArgs
+    );
+  }
+
+  // Install nested dependencies for each external package
+  await installExternalNestedDependencies(
+    plugin,
+    compositeModulePath,
+    externals,
+    packager
   );
 }
 
@@ -700,6 +884,8 @@ export async function packExternalModules(
     {
       names:
         [],
+      installArgs:
+        new Map(),
       postinstallScripts:
         new Map(),
     };
@@ -741,7 +927,28 @@ export async function packExternalModules(
     return;
   }
 
-  // Filter postinstall scripts to only include non-excluded packages
+  // Filter install args and postinstall scripts to only include non-excluded packages
+  const installArgs =
+    new Map<
+      string,
+      string
+    >();
+  for (const [
+    pkg,
+    args,
+  ] of parsedExternals.installArgs) {
+    if (
+      externals.includes(
+        pkg
+      )
+    ) {
+      installArgs.set(
+        pkg,
+        args
+      );
+    }
+  }
+
   const postinstallScripts =
     new Map<
       string,
@@ -1092,7 +1299,9 @@ export async function packExternalModules(
     this,
     compositeModulePath,
     packager,
-    exists
+    exists,
+    installArgs,
+    externals
   );
   this.log.debug(
     `Package took [${

@@ -24,6 +24,9 @@ interface NodeExternalsOptions {
     allowList?: string[];
 }
 export interface ExternalModuleConfig {
+    /** Install arguments for this package (e.g., "--os=linux --cpu=x64" for sharp) */
+    args?: string;
+    /** Script to run after the package is installed. $DIR is replaced with the package path. */
     postinstall?: string;
 }
 /**

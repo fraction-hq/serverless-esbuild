@@ -189,6 +189,7 @@ function nodeExternalsPluginUtilsPath() {
  */
 function parseExternals(externals) {
     const names = [];
+    const installArgs = new Map();
     const postinstallScripts = new Map();
     for (const external of externals) {
         if (typeof external ===
@@ -196,11 +197,14 @@ function parseExternals(externals) {
             names.push(external);
         }
         else {
-            // Object format: { packageName: { postinstall: "..." } }
+            // Object format: { packageName: { args: "...", postinstall: "..." } }
             const packageNames = Object.keys(external);
             for (const packageName of packageNames) {
                 names.push(packageName);
                 const config = external[packageName];
+                if (config?.args) {
+                    installArgs.set(packageName, config.args);
+                }
                 if (config?.postinstall) {
                     postinstallScripts.set(packageName, config.postinstall);
                 }
@@ -209,6 +213,7 @@ function parseExternals(externals) {
     }
     return {
         names,
+        installArgs,
         postinstallScripts,
     };
 }
@@ -255,15 +260,73 @@ async function runPostinstallScripts(plugin, compositeModulePath, postinstallScr
     }
 }
 /**
+ * Install packages that have specific install args configured.
+ * Uses npm to install each package with its args.
+ */
+async function installPackagesWithArgs(plugin, compositeModulePath, installArgs) {
+    if (installArgs.size ===
+        0) {
+        return;
+    }
+    const npmPackager = await packagers_1.getPackager.call(plugin, "npm", plugin.buildOptions
+        .packagerOptions);
+    for (const [packageName, args,] of installArgs) {
+        plugin.log.verbose(`Installing ${packageName} with args: ${args}`);
+        await npmPackager.install(compositeModulePath, [
+            args,
+            packageName,
+        ], false);
+    }
+}
+/**
+ * Install nested dependencies for each external package.
+ * This runs the packager's install command inside each external package's directory
+ * to pull in all of that package's dependencies.
+ */
+async function installExternalNestedDependencies(plugin, compositeModulePath, externals, packager) {
+    for (const packageName of externals) {
+        const packageDir = path_1.default.join(compositeModulePath, "node_modules", packageName);
+        // Check if package exists and has a package.json
+        const packageJsonPath = path_1.default.join(packageDir, "package.json");
+        if (!fs_extra_1.default.pathExistsSync(packageJsonPath)) {
+            plugin.log.debug(`Skipping nested dependency install for ${packageName}: no package.json found`);
+            continue;
+        }
+        // Check if the package has any dependencies
+        const packageJson = fs_extra_1.default.readJsonSync(packageJsonPath);
+        const hasDeps = packageJson.dependencies &&
+            Object.keys(packageJson.dependencies).length >
+                0;
+        if (!hasDeps) {
+            plugin.log.debug(`Skipping nested dependency install for ${packageName}: no dependencies`);
+            continue;
+        }
+        plugin.log.verbose(`Installing nested dependencies for ${packageName}`);
+        const startTime = Date.now();
+        try {
+            await packager.install(packageDir, [], false);
+            plugin.log.debug(`Nested dependencies for ${packageName} installed in ${Date.now() -
+                startTime}ms`);
+        }
+        catch (error) {
+            plugin.log.warning(`Failed to install nested dependencies for ${packageName}: ${error instanceof
+                Error
+                ? error.message
+                : error}`);
+        }
+    }
+}
+/**
  * Helper to handle package installation based on installDeps configuration.
  * Extracted to reduce complexity of packExternalModules.
  */
-async function installPackages(plugin, compositeModulePath, packager, exists) {
+async function installPackages(plugin, compositeModulePath, packager, exists, installArgs, externals) {
     const { installExtraArgs, installDeps = true, } = plugin.buildOptions;
     if (installDeps ===
         false) {
         return;
     }
+    // Legacy support for installDeps array format
     if (Array.isArray(installDeps)) {
         // Per-package installation with specific args using npm
         const npmPackager = await packagers_1.getPackager.call(plugin, "npm", plugin.buildOptions
@@ -279,6 +342,13 @@ async function installPackages(plugin, compositeModulePath, packager, exists) {
     }
     // Standard install with configured packager
     await packager.install(compositeModulePath, installExtraArgs, exists);
+    // Install packages that have specific args configured
+    if (installArgs.size >
+        0) {
+        await installPackagesWithArgs(plugin, compositeModulePath, installArgs);
+    }
+    // Install nested dependencies for each external package
+    await installExternalNestedDependencies(plugin, compositeModulePath, externals, packager);
 }
 /**
  * We need a performant algorithm to install the packages for each single
@@ -328,6 +398,7 @@ async function packExternalModules() {
         .external;
     let parsedExternals = {
         names: [],
+        installArgs: new Map(),
         postinstallScripts: new Map(),
     };
     if (Array.isArray(rawExternals)) {
@@ -350,7 +421,13 @@ async function packExternalModules() {
     if (!externals.length) {
         return;
     }
-    // Filter postinstall scripts to only include non-excluded packages
+    // Filter install args and postinstall scripts to only include non-excluded packages
+    const installArgs = new Map();
+    for (const [pkg, args,] of parsedExternals.installArgs) {
+        if (externals.includes(pkg)) {
+            installArgs.set(pkg, args);
+        }
+    }
     const postinstallScripts = new Map();
     for (const [pkg, script,] of parsedExternals.postinstallScripts) {
         if (externals.includes(pkg)) {
@@ -483,7 +560,7 @@ async function packExternalModules() {
     this.log.verbose(`Packing external modules: ${compositeModules.join(", ")}`);
     const { installDeps = true, } = this
         .buildOptions;
-    await installPackages(this, compositeModulePath, packager, exists);
+    await installPackages(this, compositeModulePath, packager, exists, installArgs, externals);
     this.log.debug(`Package took [${Date.now() -
         start} ms]`);
     // Run postinstall scripts for packages that have them configured
