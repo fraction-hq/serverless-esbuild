@@ -89,6 +89,10 @@ export class Bun
   ) {
     const command =
       "bun";
+
+    const packageName =
+      extraArgs.pop();
+
     const args =
       [
         "install",
@@ -96,7 +100,11 @@ export class Bun
           ? ""
           : "--production",
         ...extraArgs,
-      ];
+        packageName ??
+          "",
+      ].filter(
+        Boolean
+      );
 
     try {
       await spawnProcess(
