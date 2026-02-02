@@ -37,8 +37,10 @@ const utils_1 = require("./utils");
 const helper_1 = require("./helper");
 function rebaseFileReferences(pathToPackageRoot, moduleVersion) {
     if (/^(?:file:[^/]{2}|\.\/|\.\.\/)/.test(moduleVersion)) {
-        const filePath = R.replace(/^file:/, '', moduleVersion);
-        return R.replace(/\\/g, '/', `${R.startsWith('file:', moduleVersion) ? 'file:' : ''}${pathToPackageRoot}/${filePath}`);
+        const filePath = R.replace(/^file:/, "", moduleVersion);
+        return R.replace(/\\/g, "/", `${R.startsWith("file:", moduleVersion)
+            ? "file:"
+            : ""}${pathToPackageRoot}/${filePath}`);
     }
     return moduleVersion;
 }
@@ -47,9 +49,9 @@ function rebaseFileReferences(pathToPackageRoot, moduleVersion) {
  */
 function addModulesToPackageJson(externalModules, packageJson, pathToPackageRoot) {
     R.forEach((externalModule) => {
-        const splitModule = R.split('@', externalModule);
+        const splitModule = R.split("@", externalModule);
         // If we have a scoped module we have to re-add the @
-        if (R.startsWith('@', externalModule)) {
+        if (R.startsWith("@", externalModule)) {
             splitModule.splice(0, 1);
             splitModule[0] = `@${splitModule[0]}`;
         }
@@ -58,11 +60,14 @@ function addModulesToPackageJson(externalModules, packageJson, pathToPackageRoot
             return;
         }
         // We have to rebase file references to the target package.json
-        const moduleVersion = rebaseFileReferences(pathToPackageRoot, R.join('@', R.tail(splitModule)));
+        const moduleVersion = rebaseFileReferences(pathToPackageRoot, R.join("@", R.tail(splitModule)));
         // eslint-disable-next-line no-param-reassign
-        packageJson.dependencies = packageJson.dependencies || {};
+        packageJson.dependencies =
+            packageJson.dependencies ||
+                {};
         // eslint-disable-next-line no-param-reassign
-        packageJson.dependencies[dependencyName] = moduleVersion;
+        packageJson.dependencies[dependencyName] =
+            moduleVersion;
     }, externalModules);
 }
 /**
@@ -80,17 +85,27 @@ function getProdModules(externalModules, packageJsonPath, rootPackageJsonPath) {
     // eslint-disable-next-line max-statements
     R.forEach((externalModule) => {
         // (1) If not present in Dev Dependencies or Dependencies
-        if (!packageJson.dependencies?.[externalModule.external] &&
-            !packageJson.devDependencies?.[externalModule.external]) {
+        if (!packageJson
+            .dependencies?.[externalModule
+            .external] &&
+            !packageJson
+                .devDependencies?.[externalModule
+                .external]) {
             this.log.debug(`INFO: Runtime dependency '${externalModule.external}' not found in dependencies or devDependencies. It has been excluded automatically.`);
             return;
         }
         // (2) If present in Dev Dependencies
-        if (!packageJson.dependencies?.[externalModule.external] &&
-            packageJson.devDependencies?.[externalModule.external]) {
+        if (!packageJson
+            .dependencies?.[externalModule
+            .external] &&
+            packageJson
+                .devDependencies?.[externalModule
+                .external]) {
             // To minimize the chance of breaking setups we whitelist packages available on AWS here. These are due to the previously missing check
             // most likely set in devDependencies and should not lead to an error now.
-            const ignoredDevDependencies = ['aws-sdk'];
+            const ignoredDevDependencies = [
+                "aws-sdk",
+            ];
             if (!R.includes(externalModule.external, ignoredDevDependencies)) {
                 // Runtime dependency found in devDependencies but not forcefully excluded
                 this.log.error(`ERROR: Runtime dependency '${externalModule.external}' found in devDependencies.`);
@@ -103,29 +118,45 @@ function getProdModules(externalModules, packageJsonPath, rootPackageJsonPath) {
         }
         // (3) otherwise let's get the version
         // get module package - either from root or local node_modules - will be used for version and peer deps
-        const rootModulePackagePath = path_1.default.join(path_1.default.dirname(rootPackageJsonPath), 'node_modules', externalModule.external, 'package.json');
-        const localModulePackagePath = path_1.default.join(process.cwd(), path_1.default.dirname(packageJsonPath), 'node_modules', externalModule.external, 'package.json');
+        const rootModulePackagePath = path_1.default.join(path_1.default.dirname(rootPackageJsonPath), "node_modules", externalModule.external, "package.json");
+        const localModulePackagePath = path_1.default.join(process.cwd(), path_1.default.dirname(packageJsonPath), "node_modules", externalModule.external, "package.json");
         // eslint-disable-next-line no-nested-ternary
         const modulePackagePath = fs_extra_1.default.pathExistsSync(localModulePackagePath)
             ? localModulePackagePath
             : fs_extra_1.default.pathExistsSync(rootModulePackagePath)
                 ? rootModulePackagePath
                 : null;
-        const modulePackage = modulePackagePath ? require(modulePackagePath) : {};
+        const modulePackage = modulePackagePath
+            ? require(modulePackagePath)
+            : {};
         // Get version
-        const moduleVersion = packageJson.dependencies?.[externalModule.external] || modulePackage.version;
+        const moduleVersion = packageJson
+            .dependencies?.[externalModule
+            .external] ||
+            modulePackage.version;
         // add dep with version if we have it - versionless otherwise
-        prodModules.push(moduleVersion ? `${externalModule.external}@${moduleVersion}` : externalModule.external);
+        prodModules.push(moduleVersion
+            ? `${externalModule.external}@${moduleVersion}`
+            : externalModule.external);
         // Check if the module has any peer dependencies and include them too
         try {
             // find peer dependencies but remove optional ones and excluded ones
             const peerDependencies = modulePackage.peerDependencies;
-            const optionalPeerDependencies = Object.keys(R.pickBy((val) => val.optional, modulePackage.peerDependenciesMeta || {}));
-            (0, assert_1.default)(this.buildOptions, 'buildOptions not defined');
-            const peerDependenciesWithoutOptionals = R.omit([...optionalPeerDependencies, ...this.buildOptions.exclude], peerDependencies);
+            const optionalPeerDependencies = Object.keys(R.pickBy((val) => val.optional, modulePackage.peerDependenciesMeta ||
+                {}));
+            (0, assert_1.default)(this
+                .buildOptions, "buildOptions not defined");
+            const peerDependenciesWithoutOptionals = R.omit([
+                ...optionalPeerDependencies,
+                ...this
+                    .buildOptions
+                    .exclude,
+            ], peerDependencies);
             if (!R.isEmpty(peerDependenciesWithoutOptionals)) {
                 this.log.debug(`Adding explicit non-optionals peers for dependency ${externalModule.external}`);
-                const peerModules = getProdModules.call(this, R.compose(R.map(([external]) => ({ external })), R.toPairs)(peerDependenciesWithoutOptionals), packageJsonPath, rootPackageJsonPath);
+                const peerModules = getProdModules.call(this, R.compose(R.map(([external,]) => ({
+                    external,
+                })), R.toPairs)(peerDependenciesWithoutOptionals), packageJsonPath, rootPackageJsonPath);
                 Array.prototype.push.apply(prodModules, peerModules);
             }
         }
@@ -137,8 +168,10 @@ function getProdModules(externalModules, packageJsonPath, rootPackageJsonPath) {
 }
 function nodeExternalsPluginUtilsPath() {
     try {
-        const resolvedPackage = require.resolve('esbuild-node-externals/dist/utils', {
-            paths: [process.cwd()],
+        const resolvedPackage = require.resolve("esbuild-node-externals/dist/utils", {
+            paths: [
+                process.cwd(),
+            ],
         });
         return resolvedPackage;
     }
@@ -158,7 +191,8 @@ function parseExternals(externals) {
     const names = [];
     const postinstallScripts = new Map();
     for (const external of externals) {
-        if (typeof external === 'string') {
+        if (typeof external ===
+            "string") {
             names.push(external);
         }
         else {
@@ -173,33 +207,49 @@ function parseExternals(externals) {
             }
         }
     }
-    return { names, postinstallScripts };
+    return {
+        names,
+        postinstallScripts,
+    };
 }
 /**
  * Run postinstall scripts for packages that have them configured.
  * Replaces $DIR in the script with the actual package directory path.
  */
 async function runPostinstallScripts(plugin, compositeModulePath, postinstallScripts) {
-    if (postinstallScripts.size === 0) {
+    if (postinstallScripts.size ===
+        0) {
         return;
     }
-    for (const [packageName, script] of postinstallScripts) {
-        const packageDir = path_1.default.join(compositeModulePath, 'node_modules', packageName);
+    for (const [packageName, script,] of postinstallScripts) {
+        const packageDir = path_1.default.join(compositeModulePath, "node_modules", packageName);
         // Check if the package directory exists
         if (!fs_extra_1.default.pathExistsSync(packageDir)) {
             plugin.log.warning(`Skipping postinstall for ${packageName}: package directory not found at ${packageDir}`);
             continue;
         }
         // Replace $DIR with the actual package directory
-        const expandedScript = script.replace(/\$DIR\b/g, packageDir);
+        const expandedScript = script
+            .replace(/\$DIR\b/g, packageDir)
+            .replace(/\$ROOT\b/g, (0, utils_1.findProjectRoot)() ||
+            "");
         plugin.log.verbose(`Running postinstall for ${packageName}: ${expandedScript}`);
         try {
             const startTime = Date.now();
-            await (0, utils_1.spawnProcess)('sh', ['-c', expandedScript], { cwd: compositeModulePath });
-            plugin.log.debug(`Postinstall for ${packageName} completed in ${Date.now() - startTime}ms`);
+            await (0, utils_1.spawnProcess)("sh", [
+                "-c",
+                expandedScript,
+            ], {
+                cwd: compositeModulePath,
+            });
+            plugin.log.debug(`Postinstall for ${packageName} completed in ${Date.now() -
+                startTime}ms`);
         }
         catch (error) {
-            plugin.log.error(`Postinstall script failed for ${packageName}: ${error instanceof Error ? error.message : error}`);
+            plugin.log.error(`Postinstall script failed for ${packageName}: ${error instanceof
+                Error
+                ? error.message
+                : error}`);
             throw error;
         }
     }
@@ -209,16 +259,21 @@ async function runPostinstallScripts(plugin, compositeModulePath, postinstallScr
  * Extracted to reduce complexity of packExternalModules.
  */
 async function installPackages(plugin, compositeModulePath, packager, exists) {
-    const { installExtraArgs, installDeps = true } = plugin.buildOptions;
-    if (installDeps === false) {
+    const { installExtraArgs, installDeps = true, } = plugin.buildOptions;
+    if (installDeps ===
+        false) {
         return;
     }
     if (Array.isArray(installDeps)) {
         // Per-package installation with specific args using npm
-        const npmPackager = await packagers_1.getPackager.call(plugin, 'npm', plugin.buildOptions.packagerOptions);
+        const npmPackager = await packagers_1.getPackager.call(plugin, "npm", plugin.buildOptions
+            .packagerOptions);
         for (const dep of installDeps) {
             plugin.log.verbose(`Installing ${dep.package} at ${compositeModulePath} with NPM`);
-            await npmPackager.install(compositeModulePath, [dep.args, dep.package], false);
+            await npmPackager.install(compositeModulePath, [
+                dep.args,
+                dep.package,
+            ], false);
         }
         return;
     }
@@ -240,41 +295,64 @@ async function installPackages(plugin, compositeModulePath, packager, exists) {
  */
 // eslint-disable-next-line max-statements
 async function packExternalModules() {
-    (0, assert_1.default)(this.buildOptions, 'buildOptions not defined');
-    const upperPackageJson = (0, utils_1.findUp)('package.json');
-    const { plugins } = this;
-    if (plugins && plugins.map((plugin) => plugin.name).includes('node-externals')) {
+    (0, assert_1.default)(this
+        .buildOptions, "buildOptions not defined");
+    const upperPackageJson = (0, utils_1.findUp)("package.json");
+    const { plugins, } = this;
+    if (plugins &&
+        plugins
+            .map((plugin) => plugin.name)
+            .includes("node-externals")) {
         const utilsPath = nodeExternalsPluginUtilsPath();
         if (utilsPath) {
             const { findDependencies, findPackagePaths, createAllowPredicate, } = require(utilsPath);
-            this.buildOptions.external = findDependencies({
-                packagePaths: findPackagePaths(),
-                dependencies: true,
-                devDependencies: false,
-                peerDependencies: false,
-                optionalDependencies: false,
-                allowWorkspaces: false,
-                allowPredicate: createAllowPredicate(this.buildOptions.nodeExternals?.allowList ?? []),
-            });
+            this.buildOptions.external =
+                findDependencies({
+                    packagePaths: findPackagePaths(),
+                    dependencies: true,
+                    devDependencies: false,
+                    peerDependencies: false,
+                    optionalDependencies: false,
+                    allowWorkspaces: false,
+                    allowPredicate: createAllowPredicate(this
+                        .buildOptions
+                        .nodeExternals
+                        ?.allowList ??
+                        []),
+                });
         }
     }
     // Parse externals to extract names and postinstall scripts
-    const rawExternals = this.buildOptions.external;
-    let parsedExternals = { names: [], postinstallScripts: new Map() };
+    const rawExternals = this
+        .buildOptions
+        .external;
+    let parsedExternals = {
+        names: [],
+        postinstallScripts: new Map(),
+    };
     if (Array.isArray(rawExternals)) {
-        parsedExternals = parseExternals(rawExternals);
+        parsedExternals =
+            parseExternals(rawExternals);
     }
-    const externals = parsedExternals.names.length > 0 &&
-        this.buildOptions.exclude !== '*' &&
-        !this.buildOptions.exclude.includes('*')
-        ? R.without(this.buildOptions.exclude, parsedExternals.names)
+    const externals = parsedExternals
+        .names
+        .length >
+        0 &&
+        this
+            .buildOptions
+            .exclude !==
+            "*" &&
+        !this.buildOptions.exclude.includes("*")
+        ? R.without(this
+            .buildOptions
+            .exclude, parsedExternals.names)
         : [];
     if (!externals.length) {
         return;
     }
     // Filter postinstall scripts to only include non-excluded packages
     const postinstallScripts = new Map();
-    for (const [pkg, script] of parsedExternals.postinstallScripts) {
+    for (const [pkg, script,] of parsedExternals.postinstallScripts) {
         if (externals.includes(pkg)) {
             postinstallScripts.set(pkg, script);
         }
@@ -282,53 +360,85 @@ async function packExternalModules() {
     // Read plugin configuration
     // get the root package.json by looking up until we hit a lockfile
     // if this is a yarn workspace, it will be the monorepo package.json
-    const rootPackageJsonPath = path_1.default.join((0, utils_1.findProjectRoot)() || '', './package.json');
+    const rootPackageJsonPath = path_1.default.join((0, utils_1.findProjectRoot)() ||
+        "", "./package.json");
     // get the local package.json by looking up until we hit a package.json file
     // if this is *not* a yarn workspace, it will be the same as rootPackageJsonPath
-    const packageJsonPath = this.buildOptions.packagePath ||
-        (upperPackageJson && path_1.default.relative(process.cwd(), path_1.default.join(upperPackageJson, './package.json')));
-    (0, assert_1.default)(packageJsonPath, 'packageJsonPath is not defined');
+    const packageJsonPath = this
+        .buildOptions
+        .packagePath ||
+        (upperPackageJson &&
+            path_1.default.relative(process.cwd(), path_1.default.join(upperPackageJson, "./package.json")));
+    (0, assert_1.default)(packageJsonPath, "packageJsonPath is not defined");
     // Determine and create packager
-    const packager = await packagers_1.getPackager.call(this, this.buildOptions.packager, this.buildOptions.packagerOptions);
+    const packager = await packagers_1.getPackager.call(this, this
+        .buildOptions
+        .packager, this
+        .buildOptions
+        .packagerOptions);
     // Fetch needed original package.json sections
     const sectionNames = packager.copyPackageSectionNames;
     // Get scripts from packager options
-    const packagerScripts = typeof this.buildOptions.packagerOptions?.scripts !== 'undefined'
-        ? (Array.isArray(this.buildOptions.packagerOptions.scripts)
-            ? this.buildOptions.packagerOptions.scripts
-            : [this.buildOptions.packagerOptions.scripts]).reduce((scripts, script, index) => {
+    const packagerScripts = typeof this
+        .buildOptions
+        .packagerOptions
+        ?.scripts !==
+        "undefined"
+        ? (Array.isArray(this
+            .buildOptions
+            .packagerOptions
+            .scripts)
+            ? this
+                .buildOptions
+                .packagerOptions
+                .scripts
+            : [
+                this
+                    .buildOptions
+                    .packagerOptions
+                    .scripts,
+            ]).reduce((scripts, script, index) => {
             // eslint-disable-next-line no-param-reassign
-            scripts[`script${index}`] = script;
+            scripts[`script${index}`] =
+                script;
             return scripts;
         }, {})
         : {};
     const rootPackageJson = this.serverless.utils.readFileSync(rootPackageJsonPath);
     const isWorkspace = !!rootPackageJson.workspaces;
     const packageJson = isWorkspace
-        ? (packageJsonPath && this.serverless.utils.readFileSync(packageJsonPath)) || {}
+        ? (packageJsonPath &&
+            this.serverless.utils.readFileSync(packageJsonPath)) ||
+            {}
         : rootPackageJson;
     const packageSections = R.pick(sectionNames, packageJson);
     if (!R.isEmpty(packageSections)) {
-        this.log.debug(`Using package.json sections ${R.join(', ', R.keys(packageSections))}`);
+        this.log.debug(`Using package.json sections ${R.join(", ", R.keys(packageSections))}`);
     }
     // Get first level dependency graph
     this.log.debug(`Fetch dependency graph from ${packageJson}`);
     // (1) Generate dependency composition
-    const externalModules = R.map((external) => ({ external }), externals);
+    const externalModules = R.map((external) => ({
+        external,
+    }), externals);
     const compositeModules = R.uniq(getProdModules.call(this, externalModules, packageJsonPath, rootPackageJsonPath));
     if (R.isEmpty(compositeModules)) {
         // The compiled code does not reference any external modules at all
-        this.log.warning('No external modules needed');
+        this.log.warning("No external modules needed");
         return;
     }
     // (1.a) Install all needed modules
-    const compositeModulePath = this.buildDirPath;
-    (0, helper_1.assertIsString)(compositeModulePath, 'compositeModulePath is not a string');
-    const compositePackageJson = path_1.default.join(compositeModulePath, 'package.json');
+    const compositeModulePath = this
+        .buildDirPath;
+    (0, helper_1.assertIsString)(compositeModulePath, "compositeModulePath is not a string");
+    const compositePackageJson = path_1.default.join(compositeModulePath, "package.json");
     // (1.a.1) Create a package.json
     const compositePackage = R.mergeRight({
-        name: this.serverless.service.service,
-        version: '1.0.0',
+        name: this
+            .serverless
+            .service
+            .service,
+        version: "1.0.0",
         description: `Packaged externals for ${this.serverless.service.service}`,
         private: true,
         scripts: packagerScripts,
@@ -340,47 +450,69 @@ async function packExternalModules() {
     const packageLockPath = path_1.default.join(process.cwd(), path_1.default.dirname(packageJsonPath), packager.lockfileName);
     const exists = await fs_extra_1.default.pathExists(packageLockPath);
     if (exists) {
-        this.log.verbose('Package lock found - Using locked versions');
+        this.log.verbose("Package lock found - Using locked versions");
         try {
             let packageLockFile = this.serverless.utils.readFileSync(packageLockPath);
-            packageLockFile = packager.rebaseLockfile(relativePath, packageLockFile);
+            packageLockFile =
+                packager.rebaseLockfile(relativePath, packageLockFile);
             if (R.is(Object)(packageLockFile)) {
-                packageLockFile = JSON.stringify(packageLockFile, null, 2);
+                packageLockFile =
+                    JSON.stringify(packageLockFile, null, 2);
             }
             this.serverless.utils.writeFileSync(path_1.default.join(compositeModulePath, packager.lockfileName), packageLockFile);
         }
         catch (error) {
-            this.log.warning(`Warning: Could not read lock file${error instanceof Error ? `: ${error.message}` : ''}`);
+            this.log.warning(`Warning: Could not read lock file${error instanceof
+                Error
+                ? `: ${error.message}`
+                : ""}`);
         }
     }
     // GOOGLE: Copy modules only if not google-cloud-functions
     // GCF Auto installs the package json
-    if (R.path(['service', 'provider', 'name'], this.serverless) === 'google') {
+    if (R.path([
+        "service",
+        "provider",
+        "name",
+    ], this
+        .serverless) ===
+        "google") {
         return;
     }
     const start = Date.now();
-    this.log.verbose(`Packing external modules: ${compositeModules.join(', ')}`);
-    const { installDeps = true } = this.buildOptions;
+    this.log.verbose(`Packing external modules: ${compositeModules.join(", ")}`);
+    const { installDeps = true, } = this
+        .buildOptions;
     await installPackages(this, compositeModulePath, packager, exists);
-    this.log.debug(`Package took [${Date.now() - start} ms]`);
+    this.log.debug(`Package took [${Date.now() -
+        start} ms]`);
     // Run postinstall scripts for packages that have them configured
-    if (postinstallScripts.size > 0) {
+    if (postinstallScripts.size >
+        0) {
         const startPostinstall = Date.now();
         await runPostinstallScripts(this, compositeModulePath, postinstallScripts);
-        this.log.debug(`Postinstall scripts took [${Date.now() - startPostinstall} ms]`);
+        this.log.debug(`Postinstall scripts took [${Date.now() -
+            startPostinstall} ms]`);
     }
     // Prune extraneous packages - removes not needed ones
     const startPrune = Date.now();
-    if (installDeps === true) {
+    if (installDeps ===
+        true) {
         await packager.prune(compositeModulePath);
     }
-    this.log.debug(`Prune: ${compositeModulePath} [${Date.now() - startPrune} ms]`);
-    (0, helper_1.assertIsString)(this.buildDirPath, 'buildDirPath is not a string');
+    this.log.debug(`Prune: ${compositeModulePath} [${Date.now() -
+        startPrune} ms]`);
+    (0, helper_1.assertIsString)(this
+        .buildDirPath, "buildDirPath is not a string");
     // Run packager scripts
-    if (Object.keys(packagerScripts).length > 0) {
+    if (Object.keys(packagerScripts)
+        .length >
+        0) {
         const startScripts = Date.now();
-        await packager.runScripts(this.buildDirPath, Object.keys(packagerScripts));
-        this.log.debug(`Packager scripts took [${Date.now() - startScripts} ms].\nExecuted scripts: ${Object.values(packagerScripts).map((script) => `\n  ${script}`)}`);
+        await packager.runScripts(this
+            .buildDirPath, Object.keys(packagerScripts));
+        this.log.debug(`Packager scripts took [${Date.now() -
+            startScripts} ms].\nExecuted scripts: ${Object.values(packagerScripts).map((script) => `\n  ${script}`)}`);
     }
 }
 //# sourceMappingURL=pack-externals.js.map

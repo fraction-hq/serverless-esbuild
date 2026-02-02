@@ -1,4 +1,4 @@
-import type EsbuildServerlessPlugin from './index';
+import type EsbuildServerlessPlugin from "./index";
 export declare function nodeExternalsPluginUtilsPath(): string | undefined;
 /**
  * We need a performant algorithm to install the packages for each single
