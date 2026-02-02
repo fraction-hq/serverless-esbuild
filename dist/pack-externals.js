@@ -147,6 +147,64 @@ function nodeExternalsPluginUtilsPath() {
     }
 }
 /**
+ * Parse the extended external format.
+ * Supports both simple strings and objects with postinstall scripts.
+ *
+ * Examples:
+ *   - "lodash" -> { name: "lodash" }
+ *   - { muhammara: { postinstall: "echo $DIR" } } -> { name: "muhammara", postinstall: "echo $DIR" }
+ */
+function parseExternals(externals) {
+    const names = [];
+    const postinstallScripts = new Map();
+    for (const external of externals) {
+        if (typeof external === 'string') {
+            names.push(external);
+        }
+        else {
+            // Object format: { packageName: { postinstall: "..." } }
+            const packageNames = Object.keys(external);
+            for (const packageName of packageNames) {
+                names.push(packageName);
+                const config = external[packageName];
+                if (config?.postinstall) {
+                    postinstallScripts.set(packageName, config.postinstall);
+                }
+            }
+        }
+    }
+    return { names, postinstallScripts };
+}
+/**
+ * Run postinstall scripts for packages that have them configured.
+ * Replaces $DIR in the script with the actual package directory path.
+ */
+async function runPostinstallScripts(plugin, compositeModulePath, postinstallScripts) {
+    if (postinstallScripts.size === 0) {
+        return;
+    }
+    for (const [packageName, script] of postinstallScripts) {
+        const packageDir = path_1.default.join(compositeModulePath, 'node_modules', packageName);
+        // Check if the package directory exists
+        if (!fs_extra_1.default.pathExistsSync(packageDir)) {
+            plugin.log.warning(`Skipping postinstall for ${packageName}: package directory not found at ${packageDir}`);
+            continue;
+        }
+        // Replace $DIR with the actual package directory
+        const expandedScript = script.replace(/\$DIR\b/g, packageDir);
+        plugin.log.verbose(`Running postinstall for ${packageName}: ${expandedScript}`);
+        try {
+            const startTime = Date.now();
+            await (0, utils_1.spawnProcess)('sh', ['-c', expandedScript], { cwd: compositeModulePath });
+            plugin.log.debug(`Postinstall for ${packageName} completed in ${Date.now() - startTime}ms`);
+        }
+        catch (error) {
+            plugin.log.error(`Postinstall script failed for ${packageName}: ${error instanceof Error ? error.message : error}`);
+            throw error;
+        }
+    }
+}
+/**
  * Helper to handle package installation based on installDeps configuration.
  * Extracted to reduce complexity of packExternalModules.
  */
@@ -200,13 +258,26 @@ async function packExternalModules() {
             });
         }
     }
-    const externals = Array.isArray(this.buildOptions.external) &&
+    // Parse externals to extract names and postinstall scripts
+    const rawExternals = this.buildOptions.external;
+    let parsedExternals = { names: [], postinstallScripts: new Map() };
+    if (Array.isArray(rawExternals)) {
+        parsedExternals = parseExternals(rawExternals);
+    }
+    const externals = parsedExternals.names.length > 0 &&
         this.buildOptions.exclude !== '*' &&
         !this.buildOptions.exclude.includes('*')
-        ? R.without(this.buildOptions.exclude, this.buildOptions.external)
+        ? R.without(this.buildOptions.exclude, parsedExternals.names)
         : [];
     if (!externals.length) {
         return;
+    }
+    // Filter postinstall scripts to only include non-excluded packages
+    const postinstallScripts = new Map();
+    for (const [pkg, script] of parsedExternals.postinstallScripts) {
+        if (externals.includes(pkg)) {
+            postinstallScripts.set(pkg, script);
+        }
     }
     // Read plugin configuration
     // get the root package.json by looking up until we hit a lockfile
@@ -292,6 +363,12 @@ async function packExternalModules() {
     const { installDeps = true } = this.buildOptions;
     await installPackages(this, compositeModulePath, packager, exists);
     this.log.debug(`Package took [${Date.now() - start} ms]`);
+    // Run postinstall scripts for packages that have them configured
+    if (postinstallScripts.size > 0) {
+        const startPostinstall = Date.now();
+        await runPostinstallScripts(this, compositeModulePath, postinstallScripts);
+        this.log.debug(`Postinstall scripts took [${Date.now() - startPostinstall} ms]`);
+    }
     // Prune extraneous packages - removes not needed ones
     const startPrune = Date.now();
     if (installDeps === true) {

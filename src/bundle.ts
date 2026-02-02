@@ -14,6 +14,26 @@ import { trimExtension } from './utils';
 
 const getStringArray = (input: unknown): string[] => asArray(input).filter(Predicate.isString);
 
+/**
+ * Extract package names from the extended external format.
+ * Handles both simple strings and objects like { packageName: { postinstall: "..." } }
+ */
+const getExternalNames = (externals: unknown): string[] => {
+  const arr = asArray(externals);
+  const names: string[] = [];
+
+  for (const item of arr) {
+    if (typeof item === 'string') {
+      names.push(item);
+    } else if (typeof item === 'object' && item !== null) {
+      // Object format: { packageName: { postinstall: "..." } }
+      names.push(...Object.keys(item));
+    }
+  }
+
+  return names;
+};
+
 export async function bundle(this: EsbuildServerlessPlugin): Promise<void> {
   assert(this.buildOptions, 'buildOptions is not defined');
 
@@ -53,7 +73,7 @@ export async function bundle(this: EsbuildServerlessPlugin): Promise<void> {
 
   const config: Omit<BuildOptions, 'watch'> = {
     ...esbuildOptions,
-    external: [...getStringArray(this.buildOptions?.external), ...(exclude.includes('*') ? [] : exclude)],
+    external: [...getExternalNames(this.buildOptions?.external), ...(exclude.includes('*') ? [] : exclude)],
     plugins: this.plugins,
   };
 

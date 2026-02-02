@@ -28,7 +28,22 @@ interface NodeExternalsOptions {
   allowList?: string[];
 }
 
-export type EsbuildOptions = Omit<BuildOptions, 'watch' | 'plugins'>;
+export interface ExternalModuleConfig {
+  postinstall?: string;
+}
+
+/**
+ * External module definition - can be a simple string or an object with package name as key
+ * Examples:
+ *   - "lodash" (simple string)
+ *   - { muhammara: { postinstall: "echo $DIR" } } (with postinstall script)
+ *
+ * In the postinstall script, $DIR is replaced with the path to the installed package
+ * (e.g., /path/to/node_modules/muhammara)
+ */
+export type ExternalDefinition = string | Record<string, ExternalModuleConfig>;
+
+export type EsbuildOptions = Omit<BuildOptions, 'watch' | 'plugins' | 'external'>;
 
 export interface Configuration extends EsbuildOptions {
   concurrency?: number;
@@ -52,6 +67,11 @@ export interface Configuration extends EsbuildOptions {
   skipBuildExcludeFns: string[];
   stripEntryResolveExtensions?: boolean;
   disposeContext?: boolean;
+  /**
+   * Override esbuild's external to support extended format with postinstall scripts.
+   * Can be string[] or ExternalDefinition[] (mixed strings and objects with postinstall).
+   */
+  external?: ExternalDefinition[];
 }
 
 export interface EsbuildFunctionDefinitionHandler extends Serverless.FunctionDefinitionHandler {

@@ -37,6 +37,24 @@ const ramda_1 = require("ramda");
 const helper_1 = require("./helper");
 const utils_1 = require("./utils");
 const getStringArray = (input) => (0, helper_1.asArray)(input).filter(effect_1.Predicate.isString);
+/**
+ * Extract package names from the extended external format.
+ * Handles both simple strings and objects like { packageName: { postinstall: "..." } }
+ */
+const getExternalNames = (externals) => {
+    const arr = (0, helper_1.asArray)(externals);
+    const names = [];
+    for (const item of arr) {
+        if (typeof item === 'string') {
+            names.push(item);
+        }
+        else if (typeof item === 'object' && item !== null) {
+            // Object format: { packageName: { postinstall: "..." } }
+            names.push(...Object.keys(item));
+        }
+    }
+    return names;
+};
 async function bundle() {
     (0, assert_1.default)(this.buildOptions, 'buildOptions is not defined');
     this.prepare();
@@ -70,7 +88,7 @@ async function bundle() {
     }, this.buildOptions);
     const config = {
         ...esbuildOptions,
-        external: [...getStringArray(this.buildOptions?.external), ...(exclude.includes('*') ? [] : exclude)],
+        external: [...getExternalNames(this.buildOptions?.external), ...(exclude.includes('*') ? [] : exclude)],
         plugins: this.plugins,
     };
     const { buildOptions, buildDirPath } = this;

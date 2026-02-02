@@ -9,9 +9,9 @@ import type {
 } from 'esbuild-node-externals/dist/utils';
 
 import { getPackager } from './packagers';
-import { findProjectRoot, findUp } from './utils';
+import { findProjectRoot, findUp, spawnProcess } from './utils';
 import type EsbuildServerlessPlugin from './index';
-import type { JSONObject, PackageJSON } from './types';
+import type { ExternalDefinition, JSONObject, PackageJSON } from './types';
 import { assertIsString } from './helper';
 
 function rebaseFileReferences(pathToPackageRoot: string, moduleVersion: string) {
@@ -198,6 +198,84 @@ export function nodeExternalsPluginUtilsPath(): string | undefined {
   }
 }
 
+interface ParsedExternals {
+  /** Package names as strings for esbuild */
+  names: string[];
+  /** Map of package name to postinstall config */
+  postinstallScripts: Map<string, string>;
+}
+
+/**
+ * Parse the extended external format.
+ * Supports both simple strings and objects with postinstall scripts.
+ *
+ * Examples:
+ *   - "lodash" -> { name: "lodash" }
+ *   - { muhammara: { postinstall: "echo $DIR" } } -> { name: "muhammara", postinstall: "echo $DIR" }
+ */
+function parseExternals(externals: ExternalDefinition[]): ParsedExternals {
+  const names: string[] = [];
+  const postinstallScripts = new Map<string, string>();
+
+  for (const external of externals) {
+    if (typeof external === 'string') {
+      names.push(external);
+    } else {
+      // Object format: { packageName: { postinstall: "..." } }
+      const packageNames = Object.keys(external);
+      for (const packageName of packageNames) {
+        names.push(packageName);
+        const config = external[packageName];
+        if (config?.postinstall) {
+          postinstallScripts.set(packageName, config.postinstall);
+        }
+      }
+    }
+  }
+
+  return { names, postinstallScripts };
+}
+
+/**
+ * Run postinstall scripts for packages that have them configured.
+ * Replaces $DIR in the script with the actual package directory path.
+ */
+async function runPostinstallScripts(
+  plugin: EsbuildServerlessPlugin,
+  compositeModulePath: string,
+  postinstallScripts: Map<string, string>
+): Promise<void> {
+  if (postinstallScripts.size === 0) {
+    return;
+  }
+
+  for (const [packageName, script] of postinstallScripts) {
+    const packageDir = path.join(compositeModulePath, 'node_modules', packageName);
+
+    // Check if the package directory exists
+    if (!fse.pathExistsSync(packageDir)) {
+      plugin.log.warning(`Skipping postinstall for ${packageName}: package directory not found at ${packageDir}`);
+      continue;
+    }
+
+    // Replace $DIR with the actual package directory
+    const expandedScript = script.replace(/\$DIR\b/g, packageDir);
+
+    plugin.log.verbose(`Running postinstall for ${packageName}: ${expandedScript}`);
+
+    try {
+      const startTime = Date.now();
+      await spawnProcess('sh', ['-c', expandedScript], { cwd: compositeModulePath });
+      plugin.log.debug(`Postinstall for ${packageName} completed in ${Date.now() - startTime}ms`);
+    } catch (error) {
+      plugin.log.error(
+        `Postinstall script failed for ${packageName}: ${error instanceof Error ? error.message : error}`
+      );
+      throw error;
+    }
+  }
+}
+
 /**
  * Helper to handle package installation based on installDeps configuration.
  * Extracted to reduce complexity of packExternalModules.
@@ -275,15 +353,29 @@ export async function packExternalModules(this: EsbuildServerlessPlugin) {
     }
   }
 
+  // Parse externals to extract names and postinstall scripts
+  const rawExternals = this.buildOptions.external;
+  let parsedExternals: ParsedExternals = { names: [], postinstallScripts: new Map() };
+
+  if (Array.isArray(rawExternals)) {
+    parsedExternals = parseExternals(rawExternals as ExternalDefinition[]);
+  }
+
   const externals: string[] =
-    Array.isArray(this.buildOptions.external) &&
-    this.buildOptions.exclude !== '*' &&
-    !this.buildOptions.exclude.includes('*')
-      ? R.without(this.buildOptions.exclude, this.buildOptions.external)
+    parsedExternals.names.length > 0 && this.buildOptions.exclude !== '*' && !this.buildOptions.exclude.includes('*')
+      ? R.without(this.buildOptions.exclude, parsedExternals.names)
       : [];
 
   if (!externals.length) {
     return;
+  }
+
+  // Filter postinstall scripts to only include non-excluded packages
+  const postinstallScripts = new Map<string, string>();
+  for (const [pkg, script] of parsedExternals.postinstallScripts) {
+    if (externals.includes(pkg)) {
+      postinstallScripts.set(pkg, script);
+    }
   }
 
   // Read plugin configuration
@@ -409,6 +501,13 @@ export async function packExternalModules(this: EsbuildServerlessPlugin) {
 
   await installPackages(this, compositeModulePath, packager, exists);
   this.log.debug(`Package took [${Date.now() - start} ms]`);
+
+  // Run postinstall scripts for packages that have them configured
+  if (postinstallScripts.size > 0) {
+    const startPostinstall = Date.now();
+    await runPostinstallScripts(this, compositeModulePath, postinstallScripts);
+    this.log.debug(`Postinstall scripts took [${Date.now() - startPostinstall} ms]`);
+  }
 
   // Prune extraneous packages - removes not needed ones
   const startPrune = Date.now();

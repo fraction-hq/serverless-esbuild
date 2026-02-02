@@ -17,6 +17,24 @@ const constants_1 = require("./constants");
 const helper_1 = require("./helper");
 const packagers_1 = require("./packagers");
 const utils_1 = require("./utils");
+/**
+ * Extract package names from the extended external format.
+ * Handles both simple strings and objects like { packageName: { postinstall: "..." } }
+ */
+function getExternalNames(externals) {
+    if (!externals)
+        return [];
+    const names = [];
+    for (const item of externals) {
+        if (typeof item === 'string') {
+            names.push(item);
+        }
+        else if (typeof item === 'object' && item !== null) {
+            names.push(...Object.keys(item));
+        }
+    }
+    return names;
+}
 function setFunctionArtifactPath(func, artifactPath) {
     const version = this.serverless.getVersion();
     // Serverless changed the artifact path location in version 1.18
@@ -122,7 +140,7 @@ async function pack() {
     let externals = [];
     // get the list of externals to include only if exclude is not set to *
     if (this.buildOptions.exclude !== '*' && !this.buildOptions.exclude.includes('*')) {
-        externals = (0, ramda_1.without)(this.buildOptions.exclude, this.buildOptions.external ?? []);
+        externals = (0, ramda_1.without)(this.buildOptions.exclude, getExternalNames(this.buildOptions.external));
     }
     const hasExternals = !!externals?.length;
     const { buildOptions } = this;

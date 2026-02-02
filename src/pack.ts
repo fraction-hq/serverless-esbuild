@@ -14,7 +14,33 @@ import { getPackager } from './packagers';
 import { humanSize, trimExtension, zip } from './utils';
 
 import type EsbuildServerlessPlugin from './index';
-import type { EsbuildFunctionDefinitionHandler, FunctionBuildResult, FunctionReference, IFiles } from './types';
+import type {
+  EsbuildFunctionDefinitionHandler,
+  ExternalDefinition,
+  FunctionBuildResult,
+  FunctionReference,
+  IFiles,
+} from './types';
+
+/**
+ * Extract package names from the extended external format.
+ * Handles both simple strings and objects like { packageName: { postinstall: "..." } }
+ */
+function getExternalNames(externals: ExternalDefinition[] | undefined): string[] {
+  if (!externals) return [];
+
+  const names: string[] = [];
+
+  for (const item of externals) {
+    if (typeof item === 'string') {
+      names.push(item);
+    } else if (typeof item === 'object' && item !== null) {
+      names.push(...Object.keys(item));
+    }
+  }
+
+  return names;
+}
 
 function setFunctionArtifactPath(
   this: EsbuildServerlessPlugin,
@@ -171,7 +197,7 @@ export async function pack(this: EsbuildServerlessPlugin) {
 
   // get the list of externals to include only if exclude is not set to *
   if (this.buildOptions.exclude !== '*' && !this.buildOptions.exclude.includes('*')) {
-    externals = without<string>(this.buildOptions.exclude, this.buildOptions.external ?? []);
+    externals = without<string>(this.buildOptions.exclude, getExternalNames(this.buildOptions.external));
   }
 
   const hasExternals = !!externals?.length;
