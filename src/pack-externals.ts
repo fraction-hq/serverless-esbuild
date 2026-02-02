@@ -596,9 +596,12 @@ async function installPackagesWithArgs(
     const splitArgs = args
       .split(/\s+/)
       .filter(Boolean);
+    // Use --ignore-scripts to prevent triggering other packages' install scripts
+    // Our postinstall scripts are handled separately via the postinstall config
     await packager.install(
       compositeModulePath,
       [
+        "--ignore-scripts",
         ...splitArgs,
         packageName,
       ],
