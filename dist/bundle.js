@@ -53,6 +53,42 @@ const getExternalNames = (externals) => {
     }
     return names;
 };
+async function runEsbuild(buildOptions, config, uniqueFiles, buildDirPath, log) {
+    if (buildOptions.skipBundle) {
+        log.verbose(`Skipping esbuild (skipBundle: true), using pre-built files from ${buildDirPath}`);
+        return;
+    }
+    if (Number.isFinite(buildOptions.concurrency) && buildOptions.concurrency < uniqueFiles.length) {
+        const batchSize = buildOptions.concurrency;
+        const batches = [];
+        for (let i = 0; i < uniqueFiles.length; i += batchSize) {
+            batches.push(uniqueFiles.slice(i, i + batchSize));
+        }
+        log.verbose(`Compiling ${uniqueFiles.length} entrypoints in ${batches.length} batches of up to ${batchSize}...`);
+        for (let i = 0; i < batches.length; i++) {
+            const batchResult = await pkg.build({
+                ...config,
+                entryPoints: batches[i],
+                outdir: buildDirPath,
+                outbase: '.',
+            });
+            if (config.metafile) {
+                fs_extra_1.default.writeFileSync(path_1.default.join(buildDirPath, `meta-batch-${i + 1}.json`), JSON.stringify(batchResult.metafile, null, 2));
+            }
+        }
+        return;
+    }
+    log.verbose(`Compiling ${uniqueFiles.length} entrypoints in a single esbuild build...`);
+    const buildResult = await pkg.build({
+        ...config,
+        entryPoints: uniqueFiles,
+        outdir: buildDirPath,
+        outbase: '.',
+    });
+    if (config.metafile) {
+        fs_extra_1.default.writeFileSync(path_1.default.join(buildDirPath, 'meta.json'), JSON.stringify(buildResult.metafile, null, 2));
+    }
+}
 async function bundle() {
     (0, assert_1.default)(this.buildOptions, 'buildOptions is not defined');
     this.prepare();
@@ -76,6 +112,7 @@ async function bundle() {
         'outputWorkFolder',
         'nodeExternals',
         'skipBuild',
+        'skipBundle',
         'skipRebuild',
         'skipBuildExcludeFns',
         'stripEntryResolveExtensions',
@@ -107,20 +144,10 @@ async function bundle() {
     }
     // Files can contain multiple handlers for multiple functions, we want to get only the unique ones
     const uniqueFiles = (0, ramda_1.uniq)(this.functionEntries.map(({ entry }) => entry));
-    this.log.verbose(`Compiling ${uniqueFiles.length} entrypoints in a single esbuild build...`);
-    /** Build all entrypoints in a single esbuild call for shared module graph */
-    const buildResult = await pkg.build({
-        ...config,
-        entryPoints: uniqueFiles,
-        outdir: buildDirPath,
-        outbase: '.',
-    });
-    if (config.metafile) {
-        fs_extra_1.default.writeFileSync(path_1.default.join(buildDirPath, 'meta.json'), JSON.stringify(buildResult.metafile, null, 2));
-    }
+    await runEsbuild(buildOptions, config, uniqueFiles, buildDirPath, this.log);
     const fileBuildResults = uniqueFiles.map((entry) => {
         const bundlePath = entry.slice(0, entry.lastIndexOf('.')) + buildOptions.outputFileExtension;
-        return { bundlePath, entry, result: buildResult };
+        return { bundlePath, entry, result: { errors: [], warnings: [] } };
     });
     // Create a local cache with entry as key (not instance-level to avoid memory leak)
     const buildCache = fileBuildResults.reduce((acc, fileBuildResult) => {

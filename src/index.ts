@@ -329,6 +329,7 @@ class EsbuildServerlessPlugin implements ServerlessPlugin {
       platform: 'node',
       outputFileExtension: '.js',
       skipBuild: false,
+      skipBundle: false,
       skipBuildExcludeFns: [],
       stripEntryResolveExtensions: false,
       disposeContext: true, // default true

@@ -208,6 +208,346 @@ it('should filter out non esbuild options', async () => {
   expect(proxy).toHaveBeenCalledWith(config);
 });
 
+describe('skipBundle', () => {
+  it('should not call esbuild when skipBundle is true', async () => {
+    const functionEntries: FunctionEntry[] = [
+      {
+        entry: 'file1.ts',
+        func: {
+          events: [],
+          handler: 'file1.handler',
+        },
+        functionAlias: 'func1',
+      },
+      {
+        entry: 'file2.ts',
+        func: {
+          events: [],
+          handler: 'file2.handler',
+        },
+        functionAlias: 'func2',
+      },
+    ];
+
+    const buildOptions: Partial<Configuration> = {
+      concurrency: Infinity,
+      bundle: true,
+      target: 'node12',
+      external: [],
+      exclude: ['aws-sdk'],
+      nativeZip: false,
+      packager: 'npm',
+      installExtraArgs: [],
+      watch: {},
+      keepOutputDirectory: true,
+      packagerOptions: {},
+      platform: 'node',
+      outputFileExtension: '.js',
+      skipBundle: true,
+    };
+
+    const plugin = esbuildPlugin({ functionEntries, buildOptions: buildOptions as any });
+
+    await bundle.call(plugin);
+
+    const proxy = await getBuild();
+    expect(proxy).not.toHaveBeenCalled();
+  });
+
+  it('should still call prepare() when skipBundle is true', async () => {
+    const functionEntries: FunctionEntry[] = [
+      {
+        entry: 'file1.ts',
+        func: {
+          events: [],
+          handler: 'file1.handler',
+        },
+        functionAlias: 'func1',
+      },
+    ];
+
+    const buildOptions: Partial<Configuration> = {
+      concurrency: Infinity,
+      bundle: true,
+      target: 'node12',
+      external: [],
+      exclude: ['aws-sdk'],
+      nativeZip: false,
+      packager: 'npm',
+      installExtraArgs: [],
+      watch: {},
+      keepOutputDirectory: true,
+      packagerOptions: {},
+      platform: 'node',
+      outputFileExtension: '.js',
+      skipBundle: true,
+    };
+
+    const plugin = esbuildPlugin({ functionEntries, buildOptions: buildOptions as any });
+
+    await bundle.call(plugin);
+
+    expect(plugin.prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it('should set correct buildResults when skipBundle is true', async () => {
+    const functionEntries: FunctionEntry[] = [
+      {
+        entry: 'file1.ts',
+        func: {
+          events: [],
+          handler: 'file1.handler',
+        },
+        functionAlias: 'func1',
+      },
+      {
+        entry: 'file2.ts',
+        func: {
+          events: [],
+          handler: 'file2.handler',
+        },
+        functionAlias: 'func2',
+      },
+    ];
+
+    const buildOptions: Partial<Configuration> = {
+      concurrency: Infinity,
+      bundle: true,
+      target: 'node12',
+      external: [],
+      exclude: ['aws-sdk'],
+      nativeZip: false,
+      packager: 'npm',
+      installExtraArgs: [],
+      watch: {},
+      keepOutputDirectory: true,
+      packagerOptions: {},
+      platform: 'node',
+      outputFileExtension: '.js',
+      skipBundle: true,
+    };
+
+    const expectedResults: FunctionBuildResult[] = [
+      {
+        bundlePath: 'file1.js',
+        func: { events: [], handler: 'file1.handler' },
+        functionAlias: 'func1',
+      },
+      {
+        bundlePath: 'file2.js',
+        func: { events: [], handler: 'file2.handler' },
+        functionAlias: 'func2',
+      },
+    ];
+
+    const plugin = esbuildPlugin({ functionEntries, buildOptions: buildOptions as any });
+
+    await bundle.call(plugin);
+
+    expect(plugin.buildResults).toStrictEqual(expectedResults);
+  });
+});
+
+describe('batched concurrency', () => {
+  it('should make multiple esbuild calls when concurrency < entrypoints', async () => {
+    const functionEntries: FunctionEntry[] = [
+      {
+        entry: 'file1.ts',
+        func: { events: [], handler: 'file1.handler' },
+        functionAlias: 'func1',
+      },
+      {
+        entry: 'file2.ts',
+        func: { events: [], handler: 'file2.handler' },
+        functionAlias: 'func2',
+      },
+      {
+        entry: 'file3.ts',
+        func: { events: [], handler: 'file3.handler' },
+        functionAlias: 'func3',
+      },
+    ];
+
+    const buildOptions: Partial<Configuration> = {
+      concurrency: 2,
+      bundle: true,
+      target: 'node12',
+      external: [],
+      exclude: ['aws-sdk'],
+      nativeZip: false,
+      packager: 'npm',
+      installExtraArgs: [],
+      watch: {},
+      keepOutputDirectory: false,
+      packagerOptions: {},
+      platform: 'node',
+      outputFileExtension: '.js',
+    };
+
+    const plugin = esbuildPlugin({ functionEntries, buildOptions: buildOptions as any });
+
+    await bundle.call(plugin);
+
+    const proxy = await getBuild();
+    expect(proxy).toHaveBeenCalledTimes(2);
+    expect(proxy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ entryPoints: ['file1.ts', 'file2.ts'] })
+    );
+    expect(proxy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ entryPoints: ['file3.ts'] })
+    );
+  });
+
+  it('should make a single esbuild call when concurrency >= entrypoints', async () => {
+    const functionEntries: FunctionEntry[] = [
+      {
+        entry: 'file1.ts',
+        func: { events: [], handler: 'file1.handler' },
+        functionAlias: 'func1',
+      },
+      {
+        entry: 'file2.ts',
+        func: { events: [], handler: 'file2.handler' },
+        functionAlias: 'func2',
+      },
+    ];
+
+    const buildOptions: Partial<Configuration> = {
+      concurrency: 5,
+      bundle: true,
+      target: 'node12',
+      external: [],
+      exclude: ['aws-sdk'],
+      nativeZip: false,
+      packager: 'npm',
+      installExtraArgs: [],
+      watch: {},
+      keepOutputDirectory: false,
+      packagerOptions: {},
+      platform: 'node',
+      outputFileExtension: '.js',
+    };
+
+    const plugin = esbuildPlugin({ functionEntries, buildOptions: buildOptions as any });
+
+    await bundle.call(plugin);
+
+    const proxy = await getBuild();
+    expect(proxy).toHaveBeenCalledTimes(1);
+    expect(proxy).toHaveBeenCalledWith(
+      expect.objectContaining({ entryPoints: ['file1.ts', 'file2.ts'] })
+    );
+  });
+
+  it('should set correct buildResults with batched concurrency', async () => {
+    const functionEntries: FunctionEntry[] = [
+      {
+        entry: 'file1.ts',
+        func: { events: [], handler: 'file1.handler' },
+        functionAlias: 'func1',
+      },
+      {
+        entry: 'file2.ts',
+        func: { events: [], handler: 'file2.handler' },
+        functionAlias: 'func2',
+      },
+      {
+        entry: 'file3.ts',
+        func: { events: [], handler: 'file3.handler' },
+        functionAlias: 'func3',
+      },
+    ];
+
+    const buildOptions: Partial<Configuration> = {
+      concurrency: 2,
+      bundle: true,
+      target: 'node12',
+      external: [],
+      exclude: ['aws-sdk'],
+      nativeZip: false,
+      packager: 'npm',
+      installExtraArgs: [],
+      watch: {},
+      keepOutputDirectory: false,
+      packagerOptions: {},
+      platform: 'node',
+      outputFileExtension: '.js',
+    };
+
+    const expectedResults: FunctionBuildResult[] = [
+      {
+        bundlePath: 'file1.js',
+        func: { events: [], handler: 'file1.handler' },
+        functionAlias: 'func1',
+      },
+      {
+        bundlePath: 'file2.js',
+        func: { events: [], handler: 'file2.handler' },
+        functionAlias: 'func2',
+      },
+      {
+        bundlePath: 'file3.js',
+        func: { events: [], handler: 'file3.handler' },
+        functionAlias: 'func3',
+      },
+    ];
+
+    const plugin = esbuildPlugin({ functionEntries, buildOptions: buildOptions as any });
+
+    await bundle.call(plugin);
+
+    expect(plugin.buildResults).toStrictEqual(expectedResults);
+  });
+
+  it('should build one at a time when concurrency is 1', async () => {
+    const functionEntries: FunctionEntry[] = [
+      {
+        entry: 'file1.ts',
+        func: { events: [], handler: 'file1.handler' },
+        functionAlias: 'func1',
+      },
+      {
+        entry: 'file2.ts',
+        func: { events: [], handler: 'file2.handler' },
+        functionAlias: 'func2',
+      },
+    ];
+
+    const buildOptions: Partial<Configuration> = {
+      concurrency: 1,
+      bundle: true,
+      target: 'node12',
+      external: [],
+      exclude: ['aws-sdk'],
+      nativeZip: false,
+      packager: 'npm',
+      installExtraArgs: [],
+      watch: {},
+      keepOutputDirectory: false,
+      packagerOptions: {},
+      platform: 'node',
+      outputFileExtension: '.js',
+    };
+
+    const plugin = esbuildPlugin({ functionEntries, buildOptions: buildOptions as any });
+
+    await bundle.call(plugin);
+
+    const proxy = await getBuild();
+    expect(proxy).toHaveBeenCalledTimes(2);
+    expect(proxy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ entryPoints: ['file1.ts'] })
+    );
+    expect(proxy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ entryPoints: ['file2.ts'] })
+    );
+  });
+});
+
 describe('buildOption platform node', () => {
   it('should set buildResults buildPath after compilation is complete with default extension', async () => {
     const functionEntries: FunctionEntry[] = [
