@@ -147,6 +147,22 @@ async function pack() {
     // get a tree of all production dependencies
     const packagerDependenciesList = hasExternals ? await packager.getProdDependencies(buildDirPath) : {};
     const packageFiles = await (0, globby_1.default)(this.serverless.service.package.patterns);
+    const useESM = (0, helper_1.isESM)(buildOptions);
+    // Precompute dep whitelists for all functions to avoid redundant bundle parsing inside zipMapper
+    const depWhiteListMap = new Map();
+    if (hasExternals && packagerDependenciesList.dependencies) {
+        const uniqueBundlePaths = [...new Set(buildResults.map((r) => r.bundlePath))];
+        for (const bundlePath of uniqueBundlePaths) {
+            const bundleDeps = (0, helper_1.getDepsFromBundle)(path_1.default.join(buildDirPath, bundlePath), useESM);
+            const bundleExternals = (0, ramda_1.intersection)(bundleDeps, externals);
+            depWhiteListMap.set(bundlePath, (0, helper_1.flatDep)(packagerDependenciesList.dependencies, bundleExternals));
+        }
+    }
+    // Build stat cache for all files to avoid redundant fs.statSync calls across zips
+    const statCache = new Map();
+    for (const file of files) {
+        statCache.set(file.rootPath, fs_extra_1.default.statSync(file.rootPath));
+    }
     const zipMapper = async (buildResult) => {
         const { func, functionAlias, bundlePath } = buildResult;
         const bundleExcludedFiles = bundlePathList.filter((item) => !bundlePath.startsWith(item)).map(utils_1.trimExtension);
@@ -158,13 +174,8 @@ async function pack() {
         const functionExcludedFiles = (await (0, globby_1.default)(functionExclusionPatterns, { cwd: buildDirPath })).map(utils_1.trimExtension);
         const includedFiles = [...packageFiles, ...functionFiles];
         const excludedPackageFiles = [...bundleExcludedFiles, ...functionExcludedFiles];
-        // allowed external dependencies in the final zip
-        let depWhiteList = [];
-        if (hasExternals && packagerDependenciesList.dependencies) {
-            const bundleDeps = (0, helper_1.getDepsFromBundle)(path_1.default.join(buildDirPath, bundlePath), (0, helper_1.isESM)(buildOptions));
-            const bundleExternals = (0, ramda_1.intersection)(bundleDeps, externals);
-            depWhiteList = (0, helper_1.flatDep)(packagerDependenciesList.dependencies, bundleExternals);
-        }
+        // Use precomputed dep whitelist
+        const depWhiteList = depWhiteListMap.get(bundlePath) ?? [];
         const zipName = `${functionAlias}.zip`;
         const artifactPath = path_1.default.join(workDirPath, constants_1.SERVERLESS_FOLDER, zipName);
         // filter files
@@ -183,12 +194,15 @@ async function pack() {
             ...rest,
         }));
         const startZip = Date.now();
-        await (0, utils_1.zip)(artifactPath, filesPathList, buildOptions.nativeZip);
+        await (0, utils_1.zip)(artifactPath, filesPathList, buildOptions.nativeZip, statCache);
         const { size } = fs_extra_1.default.statSync(artifactPath);
         this.log.verbose(`Function zipped: ${functionAlias} - ${(0, utils_1.humanSize)(size)} [${Date.now() - startZip} ms]`);
         // defined present zip as output artifact
         setFunctionArtifactPath.call(this, func, path_1.default.relative(this.serviceDirPath, artifactPath));
     };
+    if (buildOptions.zipConcurrency === 1 && buildResults.length > 5) {
+        this.log.warning(`zipConcurrency is set to 1 with ${buildResults.length} functions. Consider increasing for faster packaging.`);
+    }
     this.log.verbose(`Zipping with concurrency: ${buildOptions.zipConcurrency}`);
     await (0, p_map_1.default)(buildResults, zipMapper, { concurrency: buildOptions.zipConcurrency });
     this.log.verbose('All functions zipped.');

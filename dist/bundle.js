@@ -31,11 +31,9 @@ const assert_1 = __importDefault(require("assert"));
 const effect_1 = require("effect");
 const pkg = __importStar(require("esbuild"));
 const fs_extra_1 = __importDefault(require("fs-extra"));
-const p_map_1 = __importDefault(require("p-map"));
 const path_1 = __importDefault(require("path"));
 const ramda_1 = require("ramda");
 const helper_1 = require("./helper");
-const utils_1 = require("./utils");
 const getStringArray = (input) => (0, helper_1.asArray)(input).filter(effect_1.Predicate.isString);
 /**
  * Extract package names from the extended external format.
@@ -107,25 +105,22 @@ async function bundle() {
     if (buildOptions.outputFileExtension !== '.js') {
         config.outExtension = { '.js': buildOptions.outputFileExtension };
     }
-    /** Build the files */
-    const bundleMapper = async (entry) => {
-        const bundlePath = entry.slice(0, entry.lastIndexOf('.')) + buildOptions.outputFileExtension;
-        const options = {
-            ...config,
-            entryPoints: [entry],
-            outdir: path_1.default.join(buildDirPath, path_1.default.dirname(entry)),
-        };
-        const result = await pkg.build(options);
-        if (config.metafile) {
-            fs_extra_1.default.writeFileSync(path_1.default.join(buildDirPath, `${(0, utils_1.trimExtension)(entry)}-meta.json`), JSON.stringify(result.metafile, null, 2));
-        }
-        return { bundlePath, entry, result };
-    };
     // Files can contain multiple handlers for multiple functions, we want to get only the unique ones
     const uniqueFiles = (0, ramda_1.uniq)(this.functionEntries.map(({ entry }) => entry));
-    this.log.verbose(`Compiling with concurrency: ${buildOptions.concurrency}`);
-    const fileBuildResults = await (0, p_map_1.default)(uniqueFiles, bundleMapper, {
-        concurrency: buildOptions.concurrency,
+    this.log.verbose(`Compiling ${uniqueFiles.length} entrypoints in a single esbuild build...`);
+    /** Build all entrypoints in a single esbuild call for shared module graph */
+    const buildResult = await pkg.build({
+        ...config,
+        entryPoints: uniqueFiles,
+        outdir: buildDirPath,
+        outbase: '.',
+    });
+    if (config.metafile) {
+        fs_extra_1.default.writeFileSync(path_1.default.join(buildDirPath, 'meta.json'), JSON.stringify(buildResult.metafile, null, 2));
+    }
+    const fileBuildResults = uniqueFiles.map((entry) => {
+        const bundlePath = entry.slice(0, entry.lastIndexOf('.')) + buildOptions.outputFileExtension;
+        return { bundlePath, entry, result: buildResult };
     });
     // Create a local cache with entry as key (not instance-level to avoid memory leak)
     const buildCache = fileBuildResults.reduce((acc, fileBuildResult) => {

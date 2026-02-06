@@ -29,12 +29,24 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.nodeExternalsPluginUtilsPath = nodeExternalsPluginUtilsPath;
 exports.packExternalModules = packExternalModules;
 const assert_1 = __importDefault(require("assert"));
+const crypto_1 = __importDefault(require("crypto"));
 const path_1 = __importDefault(require("path"));
 const fs_extra_1 = __importDefault(require("fs-extra"));
 const R = __importStar(require("ramda"));
 const packagers_1 = require("./packagers");
 const utils_1 = require("./utils");
 const helper_1 = require("./helper");
+const EXTERNALS_HASH_FILE = '.externals-hash';
+function computeInstallHash(inputs) {
+    const hash = crypto_1.default.createHash('sha256');
+    hash.update(inputs.compositePackageJson);
+    hash.update(inputs.lockfileContent ?? '');
+    hash.update(inputs.packager);
+    hash.update(JSON.stringify(inputs.installExtraArgs));
+    hash.update(JSON.stringify([...inputs.installArgs.entries()].sort()));
+    hash.update(JSON.stringify([...inputs.postinstallScripts.entries()].sort()));
+    return hash.digest('hex');
+}
 function rebaseFileReferences(pathToPackageRoot, moduleVersion) {
     if (/^(?:file:[^/]{2}|\.\/|\.\.\/)/.test(moduleVersion)) {
         const filePath = R.replace(/^file:/, "", moduleVersion);
@@ -289,9 +301,11 @@ async function installPackagesWithArgs(plugin, compositeModulePath, installArgs,
             const packageJsonPath = path_1.default.join(packageDir, "package.json");
             if (fs_extra_1.default.pathExistsSync(packageJsonPath)) {
                 const packageJson = fs_extra_1.default.readJsonSync(packageJsonPath);
-                const postinstallScript = packageJson.scripts
+                const postinstallScript = packageJson
+                    .scripts
                     ?.postinstall ||
-                    packageJson.scripts
+                    packageJson
+                        .scripts
                         ?.install;
                 if (postinstallScript) {
                     plugin.log.verbose(`Running postinstall for ${packageName}`);
@@ -320,13 +334,13 @@ async function installPackagesWithArgs(plugin, compositeModulePath, installArgs,
  * to pull in all of that package's dependencies.
  */
 async function installExternalNestedDependencies(plugin, compositeModulePath, externals, packager, installArgs) {
-    for (const packageName of externals) {
+    await Promise.all(externals.map(async (packageName) => {
         const packageDir = path_1.default.join(compositeModulePath, "node_modules", packageName);
         // Check if package exists and has a package.json
         const packageJsonPath = path_1.default.join(packageDir, "package.json");
         if (!fs_extra_1.default.pathExistsSync(packageJsonPath)) {
             plugin.log.debug(`Skipping nested dependency install for ${packageName}: no package.json found`);
-            continue;
+            return;
         }
         // Check if the package has any dependencies
         const packageJson = fs_extra_1.default.readJsonSync(packageJsonPath);
@@ -336,7 +350,7 @@ async function installExternalNestedDependencies(plugin, compositeModulePath, ex
                 0;
         if (!hasDeps) {
             plugin.log.debug(`Skipping nested dependency install for ${packageName}: no dependencies`);
-            continue;
+            return;
         }
         // Get args for this package if they exist
         const args = installArgs.get(packageName);
@@ -360,7 +374,7 @@ async function installExternalNestedDependencies(plugin, compositeModulePath, ex
                 ? error.message
                 : error}`);
         }
-    }
+    }));
 }
 /**
  * Helper to handle package installation based on installDeps configuration.
@@ -575,10 +589,12 @@ async function packExternalModules() {
     }, packageSections);
     const relativePath = path_1.default.relative(compositeModulePath, path_1.default.dirname(packageJsonPath));
     addModulesToPackageJson(compositeModules, compositePackage, relativePath);
-    this.serverless.utils.writeFileSync(compositePackageJson, JSON.stringify(compositePackage, null, 2));
+    const compositePackageJsonContent = JSON.stringify(compositePackage, null, 2);
+    this.serverless.utils.writeFileSync(compositePackageJson, compositePackageJsonContent);
     // (1.a.2) Copy package-lock.json if it exists, to prevent unwanted upgrades
     const packageLockPath = path_1.default.join(process.cwd(), path_1.default.dirname(packageJsonPath), packager.lockfileName);
     const exists = await fs_extra_1.default.pathExists(packageLockPath);
+    let lockfileContentForHash = null;
     if (exists) {
         this.log.verbose("Package lock found - Using locked versions");
         try {
@@ -589,6 +605,7 @@ async function packExternalModules() {
                 packageLockFile =
                     JSON.stringify(packageLockFile, null, 2);
             }
+            lockfileContentForHash = packageLockFile;
             this.serverless.utils.writeFileSync(path_1.default.join(compositeModulePath, packager.lockfileName), packageLockFile);
         }
         catch (error) {
@@ -611,38 +628,60 @@ async function packExternalModules() {
     }
     const start = Date.now();
     this.log.verbose(`Packing external modules: ${compositeModules.join(", ")}`);
-    const { installDeps = true, } = this
+    const { installDeps = true, keepOutputDirectory, } = this
         .buildOptions;
-    await installPackages(this, compositeModulePath, packager, exists, installArgs, externals, postinstallScripts);
-    this.log.debug(`Package took [${Date.now() -
-        start} ms]`);
-    // Run postinstall scripts for packages that have them configured
-    if (postinstallScripts.size >
-        0) {
-        const startPostinstall = Date.now();
-        await runPostinstallScripts(this, compositeModulePath, postinstallScripts);
-        this.log.debug(`Postinstall scripts took [${Date.now() -
-            startPostinstall} ms]`);
+    // Check if we can skip install via hash cache
+    const installHash = computeInstallHash({
+        installArgs,
+        postinstallScripts,
+        compositePackageJson: compositePackageJsonContent,
+        lockfileContent: lockfileContentForHash,
+        packager: this.buildOptions.packager,
+        installExtraArgs: this.buildOptions.installExtraArgs || [],
+    });
+    const hashFilePath = path_1.default.join(compositeModulePath, EXTERNALS_HASH_FILE);
+    const nodeModulesPath = path_1.default.join(compositeModulePath, 'node_modules');
+    const canUseCache = keepOutputDirectory &&
+        fs_extra_1.default.pathExistsSync(hashFilePath) &&
+        fs_extra_1.default.pathExistsSync(nodeModulesPath) &&
+        fs_extra_1.default.readFileSync(hashFilePath, 'utf8').trim() === installHash;
+    if (canUseCache) {
+        this.log.verbose('External modules unchanged - skipping install (cached)');
     }
-    // Prune extraneous packages - removes not needed ones
-    const startPrune = Date.now();
-    if (installDeps ===
-        true) {
-        await packager.prune(compositeModulePath);
-    }
-    this.log.debug(`Prune: ${compositeModulePath} [${Date.now() -
-        startPrune} ms]`);
-    (0, helper_1.assertIsString)(this
-        .buildDirPath, "buildDirPath is not a string");
-    // Run packager scripts
-    if (Object.keys(packagerScripts)
-        .length >
-        0) {
-        const startScripts = Date.now();
-        await packager.runScripts(this
-            .buildDirPath, Object.keys(packagerScripts));
-        this.log.debug(`Packager scripts took [${Date.now() -
-            startScripts} ms].\nExecuted scripts: ${Object.values(packagerScripts).map((script) => `\n  ${script}`)}`);
+    else {
+        await installPackages(this, compositeModulePath, packager, exists, installArgs, externals, postinstallScripts);
+        this.log.debug(`Package took [${Date.now() -
+            start} ms]`);
+        // Run postinstall scripts for packages that have them configured
+        if (postinstallScripts.size >
+            0) {
+            const startPostinstall = Date.now();
+            await runPostinstallScripts(this, compositeModulePath, postinstallScripts);
+            this.log.debug(`Postinstall scripts took [${Date.now() -
+                startPostinstall} ms]`);
+        }
+        // Prune extraneous packages - removes not needed ones
+        const startPrune = Date.now();
+        if (installDeps ===
+            true) {
+            await packager.prune(compositeModulePath);
+        }
+        this.log.debug(`Prune: ${compositeModulePath} [${Date.now() -
+            startPrune} ms]`);
+        (0, helper_1.assertIsString)(this
+            .buildDirPath, "buildDirPath is not a string");
+        // Run packager scripts
+        if (Object.keys(packagerScripts)
+            .length >
+            0) {
+            const startScripts = Date.now();
+            await packager.runScripts(this
+                .buildDirPath, Object.keys(packagerScripts));
+            this.log.debug(`Packager scripts took [${Date.now() -
+                startScripts} ms].\nExecuted scripts: ${Object.values(packagerScripts).map((script) => `\n  ${script}`)}`);
+        }
+        // Write hash file after successful install
+        fs_extra_1.default.writeFileSync(hashFilePath, installHash);
     }
 }
 //# sourceMappingURL=pack-externals.js.map

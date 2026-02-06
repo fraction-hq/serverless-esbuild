@@ -1,5 +1,5 @@
-import type { DependenciesResult, JSONObject } from '../types';
-import type { Packager } from './packager';
+import type { DependenciesResult, JSONObject } from "../types";
+import type { Packager } from "./packager";
 /**
  * Bun packager.
  */

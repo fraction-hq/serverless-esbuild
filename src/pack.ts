@@ -209,6 +209,25 @@ export async function pack(this: EsbuildServerlessPlugin) {
 
   const packageFiles = await globby(this.serverless.service.package.patterns);
 
+  const useESM = isESM(buildOptions);
+
+  // Precompute dep whitelists for all functions to avoid redundant bundle parsing inside zipMapper
+  const depWhiteListMap = new Map<string, string[]>();
+  if (hasExternals && packagerDependenciesList.dependencies) {
+    const uniqueBundlePaths = [...new Set(buildResults.map((r) => r.bundlePath))];
+    for (const bundlePath of uniqueBundlePaths) {
+      const bundleDeps = getDepsFromBundle(path.join(buildDirPath, bundlePath), useESM);
+      const bundleExternals = intersection(bundleDeps, externals);
+      depWhiteListMap.set(bundlePath, flatDep(packagerDependenciesList.dependencies, bundleExternals));
+    }
+  }
+
+  // Build stat cache for all files to avoid redundant fs.statSync calls across zips
+  const statCache = new Map<string, fs.Stats>();
+  for (const file of files) {
+    statCache.set(file.rootPath, fs.statSync(file.rootPath));
+  }
+
   const zipMapper = async (buildResult: FunctionBuildResult) => {
     const { func, functionAlias, bundlePath } = buildResult;
 
@@ -226,15 +245,8 @@ export async function pack(this: EsbuildServerlessPlugin) {
     const includedFiles = [...packageFiles, ...functionFiles];
     const excludedPackageFiles = [...bundleExcludedFiles, ...functionExcludedFiles];
 
-    // allowed external dependencies in the final zip
-    let depWhiteList: string[] = [];
-
-    if (hasExternals && packagerDependenciesList.dependencies) {
-      const bundleDeps = getDepsFromBundle(path.join(buildDirPath, bundlePath), isESM(buildOptions));
-      const bundleExternals = intersection(bundleDeps, externals);
-
-      depWhiteList = flatDep(packagerDependenciesList.dependencies, bundleExternals);
-    }
+    // Use precomputed dep whitelist
+    const depWhiteList = depWhiteListMap.get(bundlePath) ?? [];
 
     const zipName = `${functionAlias}.zip`;
     const artifactPath = path.join(workDirPath, SERVERLESS_FOLDER, zipName);
@@ -256,13 +268,19 @@ export async function pack(this: EsbuildServerlessPlugin) {
       }));
 
     const startZip = Date.now();
-    await zip(artifactPath, filesPathList, buildOptions.nativeZip);
+    await zip(artifactPath, filesPathList, buildOptions.nativeZip, statCache);
     const { size } = fs.statSync(artifactPath);
     this.log.verbose(`Function zipped: ${functionAlias} - ${humanSize(size)} [${Date.now() - startZip} ms]`);
 
     // defined present zip as output artifact
     setFunctionArtifactPath.call(this, func, path.relative(this.serviceDirPath, artifactPath));
   };
+
+  if (buildOptions.zipConcurrency === 1 && buildResults.length > 5) {
+    this.log.warning(
+      `zipConcurrency is set to 1 with ${buildResults.length} functions. Consider increasing for faster packaging.`
+    );
+  }
 
   this.log.verbose(`Zipping with concurrency: ${buildOptions.zipConcurrency}`);
   await pMap(buildResults, zipMapper, { concurrency: buildOptions.zipConcurrency });

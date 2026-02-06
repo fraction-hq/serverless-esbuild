@@ -3,14 +3,12 @@ import { Predicate } from 'effect';
 import type { BuildOptions } from 'esbuild';
 import * as pkg from 'esbuild';
 import fs from 'fs-extra';
-import pMap from 'p-map';
 import path from 'path';
 import { uniq } from 'ramda';
 
 import type EsbuildServerlessPlugin from './index';
 import { asArray, assertIsString, isESM } from './helper';
 import type { EsbuildOptions, FileBuildResult, FunctionBuildResult } from './types';
-import { trimExtension } from './utils';
 
 const getStringArray = (input: unknown): string[] => asArray(input).filter(Predicate.isString);
 
@@ -101,35 +99,26 @@ export async function bundle(this: EsbuildServerlessPlugin): Promise<void> {
     config.outExtension = { '.js': buildOptions.outputFileExtension };
   }
 
-  /** Build the files */
-  const bundleMapper = async (entry: string): Promise<FileBuildResult> => {
-    const bundlePath = entry.slice(0, entry.lastIndexOf('.')) + buildOptions.outputFileExtension;
-
-    const options = {
-      ...config,
-      entryPoints: [entry],
-      outdir: path.join(buildDirPath, path.dirname(entry)),
-    };
-
-    const result = await pkg.build(options);
-
-    if (config.metafile) {
-      fs.writeFileSync(
-        path.join(buildDirPath, `${trimExtension(entry)}-meta.json`),
-        JSON.stringify(result.metafile, null, 2)
-      );
-    }
-
-    return { bundlePath, entry, result };
-  };
-
   // Files can contain multiple handlers for multiple functions, we want to get only the unique ones
   const uniqueFiles: string[] = uniq(this.functionEntries.map(({ entry }) => entry));
 
-  this.log.verbose(`Compiling with concurrency: ${buildOptions.concurrency}`);
+  this.log.verbose(`Compiling ${uniqueFiles.length} entrypoints in a single esbuild build...`);
 
-  const fileBuildResults = await pMap(uniqueFiles, bundleMapper, {
-    concurrency: buildOptions.concurrency,
+  /** Build all entrypoints in a single esbuild call for shared module graph */
+  const buildResult = await pkg.build({
+    ...config,
+    entryPoints: uniqueFiles,
+    outdir: buildDirPath,
+    outbase: '.',
+  });
+
+  if (config.metafile) {
+    fs.writeFileSync(path.join(buildDirPath, 'meta.json'), JSON.stringify(buildResult.metafile, null, 2));
+  }
+
+  const fileBuildResults: FileBuildResult[] = uniqueFiles.map((entry) => {
+    const bundlePath = entry.slice(0, entry.lastIndexOf('.')) + buildOptions.outputFileExtension;
+    return { bundlePath, entry, result: buildResult };
   });
 
   // Create a local cache with entry as key (not instance-level to avoid memory leak)

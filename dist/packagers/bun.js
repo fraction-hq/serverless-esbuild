@@ -32,7 +32,7 @@ const utils_1 = require("../utils");
  */
 class Bun {
     get lockfileName() {
-        return 'bun.lock';
+        return "bun.lock";
     }
     get copyPackageSectionNames() {
         return [];
@@ -41,43 +41,72 @@ class Bun {
         return true;
     }
     async getProdDependencies(cwd, _depth) {
-        const packageJsonPath = path.join(cwd, 'package.json');
+        const packageJsonPath = path.join(cwd, "package.json");
         try {
-            const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-            const dependencies = packageJson.dependencies || {};
-            const result = { dependencies: {} };
-            for (const [name, version] of Object.entries(dependencies)) {
-                result.dependencies[name] = { version: version };
+            const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+            const dependencies = packageJson.dependencies ||
+                {};
+            const result = {
+                dependencies: {},
+            };
+            for (const [name, version,] of Object.entries(dependencies)) {
+                result.dependencies[name] =
+                    {
+                        version: version,
+                    };
             }
             return result;
         }
         catch (err) {
-            return { dependencies: {} };
+            return {
+                dependencies: {},
+            };
         }
     }
     rebaseLockfile(_pathToPackageRoot, lockfile) {
         return lockfile;
     }
     async install(cwd, extraArgs, _useLockfile) {
-        const command = 'bun';
-        const args = ['install', '--production', ...extraArgs];
+        const command = "bun";
+        const packageName = extraArgs.pop();
+        const args = [
+            "install",
+            extraArgs.length
+                ? ""
+                : "--production",
+            ...extraArgs,
+            packageName ??
+                "",
+        ].filter(Boolean);
         try {
-            await (0, utils_1.spawnProcess)(command, args, { cwd });
+            await (0, utils_1.spawnProcess)(command, args, {
+                cwd,
+            });
         }
         catch (err) {
             // Fallback without --production if it fails
-            const fallbackArgs = ['install', ...extraArgs];
-            await (0, utils_1.spawnProcess)(command, fallbackArgs, { cwd });
+            const fallbackArgs = [
+                "install",
+                ...extraArgs,
+            ];
+            await (0, utils_1.spawnProcess)(command, fallbackArgs, {
+                cwd,
+            });
         }
     }
     async prune(_cwd) {
         // Bun doesn't have a prune command, no-op
     }
     async runScripts(cwd, scriptNames) {
-        const command = 'bun';
+        const command = "bun";
         await Promise.all(scriptNames.map((scriptName) => {
-            const args = ['run', scriptName];
-            return (0, utils_1.spawnProcess)(command, args, { cwd });
+            const args = [
+                "run",
+                scriptName,
+            ];
+            return (0, utils_1.spawnProcess)(command, args, {
+                cwd,
+            });
         }));
     }
 }

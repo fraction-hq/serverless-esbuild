@@ -4,7 +4,8 @@
       "Bash(npm run build:*)",
       "Bash(npm test:*)",
       "Bash(npx prettier:*)",
-      "Bash(npx jest:*)"
+      "Bash(npx jest:*)",
+      "Bash(git -C /Users/josh/dev/serverless-esbuild log --oneline -20)"
     ]
   }
 }

@@ -1,4 +1,5 @@
 import execa from 'execa';
+import fs from 'fs-extra';
 import type { ESMPluginsModule, IFiles } from './types';
 export declare class SpawnError extends Error {
     stdout: string;
@@ -24,7 +25,7 @@ export declare const findUp: (name: string) => string | undefined;
  */
 export declare const findProjectRoot: (rootDir?: string) => string | undefined;
 export declare const humanSize: (size: number) => string;
-export declare const zip: (zipPath: string, filesPathList: IFiles, useNativeZip?: boolean) => Promise<void>;
+export declare const zip: (zipPath: string, filesPathList: IFiles, useNativeZip?: boolean, statCache?: Map<string, fs.Stats>) => Promise<void>;
 export declare function trimExtension(entry: string): string;
 export declare const isEmpty: (obj: Record<string, unknown>) => boolean;
 export declare const isESMModule: (obj: unknown) => obj is ESMPluginsModule;

@@ -131,12 +131,14 @@ describe('pack', () => {
       expect(zipSpy).toHaveBeenCalledWith(
         '/workdir/serverless-esbuild/examples/individually/.esbuild/.serverless/hello1.zip',
         expect.any(Array),
-        expect.any(Boolean)
+        expect.any(Boolean),
+        expect.any(Map)
       );
       expect(zipSpy).toHaveBeenCalledWith(
         '/workdir/serverless-esbuild/examples/individually/.esbuild/.serverless/hello2.zip',
         expect.any(Array),
-        expect.any(Boolean)
+        expect.any(Boolean),
+        expect.any(Map)
       );
     });
 

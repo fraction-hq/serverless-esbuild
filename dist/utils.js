@@ -1,27 +1,4 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -36,7 +13,7 @@ const effect_1 = require("effect");
 const execa_1 = __importDefault(require("execa"));
 const fs_extra_1 = __importDefault(require("fs-extra"));
 const path_1 = __importDefault(require("path"));
-const effect_fs_1 = __importStar(require("./utils/effect-fs"));
+const effect_fs_1 = require("./utils/effect-fs");
 class SpawnError extends Error {
     constructor(message, stdout, stderr) {
         super(message);
@@ -87,43 +64,58 @@ const humanSize = (size) => {
     return `${sanitized} ${['B', 'KB', 'MB', 'GB', 'TB'][exponent]}`;
 };
 exports.humanSize = humanSize;
-const zip = async (zipPath, filesPathList, useNativeZip = false) => {
-    // create a temporary directory to hold the final zip structure
-    const tempDirName = `${path_1.default.basename(zipPath, path_1.default.extname(zipPath))}-${Date.now().toString()}`;
-    const copyFileEffect = (temp) => (file) => effect_fs_1.default.copy(file.rootPath, path_1.default.join(temp, file.localPath));
-    const bestZipEffect = (temp) => effect_1.Effect.tryPromise(() => (0, bestzip_1.bestzip)({ source: '*', destination: zipPath, cwd: temp }));
-    const nodeZipEffect = effect_1.Effect.tryPromise(() => nodeZip(zipPath, filesPathList));
-    const archiveEffect = (0, effect_fs_1.makeTempPathScoped)(tempDirName).pipe(
-    // copy all required files from origin path to (sometimes modified) target path
-    effect_1.Effect.tap((temp) => effect_1.Effect.all(filesPathList.map(copyFileEffect(temp)), { discard: true })), 
-    // prepare zip folder
-    effect_1.Effect.tap(() => (0, effect_fs_1.makePath)(path_1.default.dirname(zipPath))), 
-    // zip the temporary directory
-    effect_1.Effect.andThen((temp) => (useNativeZip ? bestZipEffect(temp) : nodeZipEffect)), effect_1.Effect.scoped);
-    await archiveEffect.pipe(effect_1.Effect.provide(platform_node_1.NodeFileSystem.layer), effect_1.Effect.runPromise);
+const zip = async (zipPath, filesPathList, useNativeZip, statCache) => {
+    if (useNativeZip === true) {
+        // bestzip requires files on disk in a flat directory structure
+        const tempDirName = `${path_1.default.basename(zipPath, path_1.default.extname(zipPath))}-${Date.now().toString()}`;
+        const linkOrCopyFile = (temp) => (file) => {
+            const dest = path_1.default.join(temp, file.localPath);
+            return (0, effect_fs_1.makePath)(path_1.default.dirname(dest)).pipe(effect_1.Effect.andThen(effect_1.Effect.tryPromise(async () => {
+                try {
+                    await fs_extra_1.default.link(file.rootPath, dest);
+                }
+                catch {
+                    await fs_extra_1.default.copy(file.rootPath, dest);
+                }
+            })));
+        };
+        const bestZipEffect = (temp) => effect_1.Effect.tryPromise(() => (0, bestzip_1.bestzip)({ source: '*', destination: zipPath, cwd: temp }));
+        const archiveEffect = (0, effect_fs_1.makeTempPathScoped)(tempDirName).pipe(effect_1.Effect.tap((temp) => effect_1.Effect.all(filesPathList.map(linkOrCopyFile(temp)), { discard: true })), effect_1.Effect.tap(() => (0, effect_fs_1.makePath)(path_1.default.dirname(zipPath))), effect_1.Effect.andThen((temp) => bestZipEffect(temp)), effect_1.Effect.scoped);
+        await archiveEffect.pipe(effect_1.Effect.provide(platform_node_1.NodeFileSystem.layer), effect_1.Effect.runPromise);
+    }
+    else {
+        // Skip temp directory entirely - nodeZip reads directly from rootPath
+        await (0, effect_fs_1.makePath)(path_1.default.dirname(zipPath)).pipe(effect_1.Effect.provide(platform_node_1.NodeFileSystem.layer), effect_1.Effect.runPromise);
+        await nodeZip(zipPath, filesPathList, statCache);
+    }
 };
 exports.zip = zip;
-function nodeZip(zipPath, filesPathList) {
-    const zipArchive = archiver_1.default.create('zip');
-    const output = fs_extra_1.default.createWriteStream(zipPath);
-    // write zip
-    output.on('open', () => {
-        zipArchive.pipe(output);
-        filesPathList.forEach((file) => {
-            const stats = fs_extra_1.default.statSync(file.rootPath);
-            if (stats.isDirectory())
-                return;
-            zipArchive.append(fs_extra_1.default.readFileSync(file.rootPath), {
-                name: file.localPath,
-                mode: stats.mode,
-                date: new Date(0), // necessary to get the same hash when zipping the same content
-            });
-        });
-        zipArchive.finalize();
-    });
+function nodeZip(zipPath, filesPathList, statCache) {
     return new Promise((resolve, reject) => {
+        const zipArchive = archiver_1.default.create('zip');
+        const output = fs_extra_1.default.createWriteStream(zipPath);
         output.on('close', resolve);
         zipArchive.on('error', (err) => reject(err));
+        // write zip
+        output.on('open', () => {
+            try {
+                zipArchive.pipe(output);
+                filesPathList.forEach((file) => {
+                    const stats = statCache?.get(file.rootPath) ?? fs_extra_1.default.statSync(file.rootPath);
+                    if (stats.isDirectory())
+                        return;
+                    zipArchive.file(file.rootPath, {
+                        name: file.localPath,
+                        mode: stats.mode,
+                        date: new Date(0), // necessary to get the same hash when zipping the same content
+                    });
+                });
+                zipArchive.finalize();
+            }
+            catch (err) {
+                reject(err);
+            }
+        });
     });
 }
 function trimExtension(entry) {

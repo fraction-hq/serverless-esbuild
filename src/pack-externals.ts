@@ -1,4 +1,5 @@
 import assert from "assert";
+import crypto from "crypto";
 import path from "path";
 import fse from "fs-extra";
 import * as R from "ramda";
@@ -21,6 +22,26 @@ import type {
   PackageJSON,
 } from "./types";
 import { assertIsString } from "./helper";
+
+const EXTERNALS_HASH_FILE = '.externals-hash';
+
+function computeInstallHash(inputs: {
+  installArgs: Map<string, string>;
+  postinstallScripts: Map<string, string>;
+  compositePackageJson: string;
+  lockfileContent: string | null;
+  packager: string;
+  installExtraArgs: string[];
+}): string {
+  const hash = crypto.createHash('sha256');
+  hash.update(inputs.compositePackageJson);
+  hash.update(inputs.lockfileContent ?? '');
+  hash.update(inputs.packager);
+  hash.update(JSON.stringify(inputs.installExtraArgs));
+  hash.update(JSON.stringify([...inputs.installArgs.entries()].sort()));
+  hash.update(JSON.stringify([...inputs.postinstallScripts.entries()].sort()));
+  return hash.digest('hex');
+}
 
 function rebaseFileReferences(
   pathToPackageRoot: string,
@@ -647,9 +668,11 @@ async function installPackagesWithArgs(
             packageJsonPath
           );
         const postinstallScript =
-          packageJson.scripts
+          packageJson
+            .scripts
             ?.postinstall ||
-          packageJson.scripts
+          packageJson
+            .scripts
             ?.install;
         if (
           postinstallScript
@@ -703,104 +726,110 @@ async function installExternalNestedDependencies(
     string
   >
 ): Promise<void> {
-  for (const packageName of externals) {
-    const packageDir =
-      path.join(
-        compositeModulePath,
-        "node_modules",
+  await Promise.all(
+    externals.map(
+      async (
         packageName
-      );
+      ) => {
+        const packageDir =
+          path.join(
+            compositeModulePath,
+            "node_modules",
+            packageName
+          );
 
-    // Check if package exists and has a package.json
-    const packageJsonPath =
-      path.join(
-        packageDir,
-        "package.json"
-      );
+        // Check if package exists and has a package.json
+        const packageJsonPath =
+          path.join(
+            packageDir,
+            "package.json"
+          );
 
-    if (
-      !fse.pathExistsSync(
-        packageJsonPath
-      )
-    ) {
-      plugin.log.debug(
-        `Skipping nested dependency install for ${packageName}: no package.json found`
-      );
-      continue;
-    }
+        if (
+          !fse.pathExistsSync(
+            packageJsonPath
+          )
+        ) {
+          plugin.log.debug(
+            `Skipping nested dependency install for ${packageName}: no package.json found`
+          );
+          return;
+        }
 
-    // Check if the package has any dependencies
-    const packageJson =
-      fse.readJsonSync(
-        packageJsonPath
-      );
-    const hasDeps =
-      packageJson.dependencies &&
-      Object.keys(
-        packageJson.dependencies
-      )
-        .length >
-        0;
+        // Check if the package has any dependencies
+        const packageJson =
+          fse.readJsonSync(
+            packageJsonPath
+          );
+        const hasDeps =
+          packageJson.dependencies &&
+          Object.keys(
+            packageJson.dependencies
+          )
+            .length >
+            0;
 
-    if (
-      !hasDeps
-    ) {
-      plugin.log.debug(
-        `Skipping nested dependency install for ${packageName}: no dependencies`
-      );
-      continue;
-    }
+        if (
+          !hasDeps
+        ) {
+          plugin.log.debug(
+            `Skipping nested dependency install for ${packageName}: no dependencies`
+          );
+          return;
+        }
 
-    // Get args for this package if they exist
-    const args =
-      installArgs.get(
-        packageName
-      );
-    const splitArgs =
-      args
-        ? args
-            .split(
-              /\s+/
-            )
-            .filter(
-              Boolean
-            )
-        : [];
+        // Get args for this package if they exist
+        const args =
+          installArgs.get(
+            packageName
+          );
+        const splitArgs =
+          args
+            ? args
+                .split(
+                  /\s+/
+                )
+                .filter(
+                  Boolean
+                )
+            : [];
 
-    plugin.log.verbose(
-      `Installing nested dependencies for ${packageName}${
-        args
-          ? ` with args: ${args}`
-          : ""
-      }`
-    );
+        plugin.log.verbose(
+          `Installing nested dependencies for ${packageName}${
+            args
+              ? ` with args: ${args}`
+              : ""
+          }`
+        );
 
-    const startTime =
-      Date.now();
+        const startTime =
+          Date.now();
 
-    try {
-      await packager.install(
-        packageDir,
-        splitArgs,
-        false
-      );
-      plugin.log.debug(
-        `Nested dependencies for ${packageName} installed in ${
-          Date.now() -
-          startTime
-        }ms`
-      );
-    } catch (error) {
-      plugin.log.warning(
-        `Failed to install nested dependencies for ${packageName}: ${
-          error instanceof
-          Error
-            ? error.message
-            : error
-        }`
-      );
-    }
-  }
+        try {
+          await packager.install(
+            packageDir,
+            splitArgs,
+            false
+          );
+          plugin.log.debug(
+            `Nested dependencies for ${packageName} installed in ${
+              Date.now() -
+              startTime
+            }ms`
+          );
+        } catch (error) {
+          plugin.log.warning(
+            `Failed to install nested dependencies for ${packageName}: ${
+              error instanceof
+              Error
+                ? error.message
+                : error
+            }`
+          );
+        }
+      }
+    )
+  );
 }
 
 /**
@@ -1322,13 +1351,15 @@ export async function packExternalModules(
     compositePackage,
     relativePath
   );
-  this.serverless.utils.writeFileSync(
-    compositePackageJson,
+  const compositePackageJsonContent =
     JSON.stringify(
       compositePackage,
       null,
       2
-    )
+    );
+  this.serverless.utils.writeFileSync(
+    compositePackageJson,
+    compositePackageJsonContent
   );
 
   // (1.a.2) Copy package-lock.json if it exists, to prevent unwanted upgrades
@@ -1344,6 +1375,8 @@ export async function packExternalModules(
     await fse.pathExists(
       packageLockPath
     );
+
+  let lockfileContentForHash: string | null = null;
 
   if (
     exists
@@ -1376,6 +1409,8 @@ export async function packExternalModules(
             2
           );
       }
+
+      lockfileContentForHash = packageLockFile as string;
 
       this.serverless.utils.writeFileSync(
         path.join(
@@ -1423,103 +1458,128 @@ export async function packExternalModules(
   );
   const {
     installDeps = true,
+    keepOutputDirectory,
   } =
     this
       .buildOptions;
 
-  await installPackages(
-    this,
-    compositeModulePath,
-    packager,
-    exists,
+  // Check if we can skip install via hash cache
+  const installHash = computeInstallHash({
     installArgs,
-    externals,
-    postinstallScripts
-  );
-  this.log.debug(
-    `Package took [${
-      Date.now() -
-      start
-    } ms]`
-  );
+    postinstallScripts,
+    compositePackageJson: compositePackageJsonContent,
+    lockfileContent: lockfileContentForHash,
+    packager: this.buildOptions.packager,
+    installExtraArgs: this.buildOptions.installExtraArgs || [],
+  });
+  const hashFilePath = path.join(compositeModulePath, EXTERNALS_HASH_FILE);
+  const nodeModulesPath = path.join(compositeModulePath, 'node_modules');
+  const canUseCache =
+    keepOutputDirectory &&
+    fse.pathExistsSync(hashFilePath) &&
+    fse.pathExistsSync(nodeModulesPath) &&
+    fse.readFileSync(hashFilePath, 'utf8').trim() === installHash;
 
-  // Run postinstall scripts for packages that have them configured
-  if (
-    postinstallScripts.size >
-    0
-  ) {
-    const startPostinstall =
-      Date.now();
-    await runPostinstallScripts(
+  if (canUseCache) {
+    this.log.verbose('External modules unchanged - skipping install (cached)');
+  } else {
+    await installPackages(
       this,
       compositeModulePath,
+      packager,
+      exists,
+      installArgs,
+      externals,
       postinstallScripts
     );
     this.log.debug(
-      `Postinstall scripts took [${
+      `Package took [${
         Date.now() -
-        startPostinstall
+        start
       } ms]`
     );
-  }
 
-  // Prune extraneous packages - removes not needed ones
-  const startPrune =
-    Date.now();
+    // Run postinstall scripts for packages that have them configured
+    if (
+      postinstallScripts.size >
+      0
+    ) {
+      const startPostinstall =
+        Date.now();
+      await runPostinstallScripts(
+        this,
+        compositeModulePath,
+        postinstallScripts
+      );
+      this.log.debug(
+        `Postinstall scripts took [${
+          Date.now() -
+          startPostinstall
+        } ms]`
+      );
+    }
 
-  if (
-    installDeps ===
-    true
-  ) {
-    await packager.prune(
-      compositeModulePath
-    );
-  }
-
-  this.log.debug(
-    `Prune: ${compositeModulePath} [${
-      Date.now() -
-      startPrune
-    } ms]`
-  );
-
-  assertIsString(
-    this
-      .buildDirPath,
-    "buildDirPath is not a string"
-  );
-
-  // Run packager scripts
-  if (
-    Object.keys(
-      packagerScripts
-    )
-      .length >
-    0
-  ) {
-    const startScripts =
+    // Prune extraneous packages - removes not needed ones
+    const startPrune =
       Date.now();
 
-    await packager.runScripts(
+    if (
+      installDeps ===
+      true
+    ) {
+      await packager.prune(
+        compositeModulePath
+      );
+    }
+
+    this.log.debug(
+      `Prune: ${compositeModulePath} [${
+        Date.now() -
+        startPrune
+      } ms]`
+    );
+
+    assertIsString(
       this
         .buildDirPath,
+      "buildDirPath is not a string"
+    );
+
+    // Run packager scripts
+    if (
       Object.keys(
         packagerScripts
       )
-    );
+        .length >
+      0
+    ) {
+      const startScripts =
+        Date.now();
 
-    this.log.debug(
-      `Packager scripts took [${
-        Date.now() -
-        startScripts
-      } ms].\nExecuted scripts: ${Object.values(
-        packagerScripts
-      ).map(
-        (
-          script
-        ) =>
-          `\n  ${script}`
-      )}`
-    );
+      await packager.runScripts(
+        this
+          .buildDirPath,
+        Object.keys(
+          packagerScripts
+        )
+      );
+
+      this.log.debug(
+        `Packager scripts took [${
+          Date.now() -
+          startScripts
+        } ms].\nExecuted scripts: ${Object.values(
+          packagerScripts
+        ).map(
+          (
+            script
+          ) =>
+            `\n  ${script}`
+        )}`
+      );
+    }
+
+    // Write hash file after successful install
+    fse.writeFileSync(hashFilePath, installHash);
   }
 }

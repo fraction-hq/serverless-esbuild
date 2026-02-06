@@ -1,5 +1,4 @@
 import { build } from 'esbuild';
-import pMap from 'p-map';
 import type { PartialDeep } from 'type-fest';
 
 import { bundle } from '../bundle';
@@ -8,7 +7,6 @@ import type { Configuration, FunctionBuildResult, FunctionEntry } from '../types
 import type EsbuildServerlessPlugin from '../index';
 
 jest.mock('esbuild');
-jest.mock('p-map');
 
 const getBuild = async () => {
   return build;
@@ -55,12 +53,6 @@ const esbuildPlugin = (override?: Partial<EsbuildServerlessPlugin>): EsbuildServ
     ...override,
   } as PartialDeep<EsbuildServerlessPlugin> as EsbuildServerlessPlugin);
 
-beforeEach(() => {
-  jest.mocked(pMap).mockImplementation((entries, mapper) => {
-    return Promise.all((entries as string[]).map((entry, index) => mapper(entry, index)));
-  });
-});
-
 afterEach(() => {
   jest.resetAllMocks();
 });
@@ -91,7 +83,7 @@ it('should call esbuild only once when functions share the same entry', async ()
   expect(proxy).toHaveBeenCalledTimes(1);
 });
 
-it('should only call esbuild multiple times when functions have different entries', async () => {
+it('should call esbuild once even when functions have different entries (multi-entrypoint)', async () => {
   const functionEntries: FunctionEntry[] = [
     {
       entry: 'file1.ts',
@@ -114,7 +106,7 @@ it('should only call esbuild multiple times when functions have different entrie
   await bundle.call(esbuildPlugin({ functionEntries }));
 
   const proxy = await getBuild();
-  expect(proxy).toHaveBeenCalledTimes(2);
+  expect(proxy).toHaveBeenCalledTimes(1);
 });
 
 it('should set buildResults after compilation is complete', async () => {
@@ -157,7 +149,7 @@ it('should set buildResults after compilation is complete', async () => {
   expect(plugin.buildResults).toStrictEqual(expectedResults);
 });
 
-it('should set the concurrency for pMap with the concurrency specified', async () => {
+it('should build all unique entrypoints in a single esbuild call', async () => {
   const functionEntries: FunctionEntry[] = [
     {
       entry: 'file1.ts',
@@ -173,9 +165,15 @@ it('should set the concurrency for pMap with the concurrency specified', async (
 
   await bundle.call(plugin);
 
-  expect(pMap).toHaveBeenCalledWith(expect.any(Array), expect.any(Function), {
-    concurrency: Infinity,
-  });
+  const proxy = await getBuild();
+  expect(proxy).toHaveBeenCalledTimes(1);
+  expect(proxy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      entryPoints: ['file1.ts'],
+      outdir: '/workdir/.esbuild',
+      outbase: '.',
+    })
+  );
 });
 
 it('should filter out non esbuild options', async () => {
@@ -198,6 +196,7 @@ it('should filter out non esbuild options', async () => {
     bundle: true,
     entryPoints: ['file1.ts'],
     external: ['aws-sdk'],
+    outbase: '.',
     outdir: '/workdir/.esbuild',
     platform: 'node',
     plugins: [],
